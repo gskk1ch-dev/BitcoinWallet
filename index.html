@@ -522,11 +522,11 @@ function App() {
       unlockedTitle: get("unlockedTitle", "Wallet safely unlocked"),
       unlockedBody: get("unlockedBody", "Your private key was decrypted and your balances are synchronized. Next, set a password to encrypt this wallet on your device."),
       unlockedContinue: get("unlockedContinue", "Continue"),
-      pwTitle: get("pwTitle", "Create wallet password"),
-      pwBody: get("pwBody", "This password encrypts your imported key on this device. You'll enter it each time you open the wallet."),
+      pwTitle: get("pwTitle", "Create your encryption password"),
+      pwBody: get("pwBody", "This password is combined with your private key to encrypt your wallet. It must be at least 24 characters long. You will need to enter it every time you open the wallet — write it down and keep it safe. If you forget this password, your wallet cannot be decrypted and access to your funds will be permanently lost. No one, including support, can recover it for you."),
       pwNew: get("pwNew", "New password"),
       pwConfirm: get("pwConfirm", "Confirm password"),
-      pwWarn: get("pwWarn", "Demo only — this password isn't actually used to encrypt anything. Never reuse a real wallet password here."),
+      pwWarn: get("pwWarn", "IMPORTANT: There is no password recovery. If you lose this password, your wallet is gone forever. (Note: this is an educational demo — no real encryption is performed and no real funds are at risk.)"),
       pwSubmit: get("pwSubmit", "Encrypt & open wallet"),
       // Send
       sendTitle: get("sendTitle", "Send"),
@@ -1014,7 +1014,7 @@ function RestoreProcessing({ onComplete, ui }) {
     { t: "Synchronizing balances", at: 55 },
     { t: "Finalizing", at: 92 },
   ], []);
-  const DURATION = 60; // seconds
+  const DURATION = 10; // seconds
   const [pct, setPct] = useState(0);
 
   useEffect(() => {
@@ -1118,18 +1118,19 @@ function RestorePassword({ onBack, onDone, ui }) {
 
   const strength = useMemo(() => {
     let s = 0;
-    if (pw.length >= 8) s++;
+    if (pw.length >= 24) s++;
     if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
     if (/\d/.test(pw)) s++;
     if (/[^A-Za-z0-9]/.test(pw)) s++;
     return s; // 0–4
   }, [pw]);
-  const labels = ["Too weak", "Weak", "Fair", "Good", "Strong"];
+  const labels = ["Too short", "Weak", "Fair", "Good", "Strong"];
   const colors = ["#ff6b6b", "#ff6b6b", "#ffb340", "#3ddc97", "#3ddc97"];
+  const longEnough = pw.length >= 24;
 
   function finish() {
     setError("");
-    if (pw.length < 8) return setError("Use at least 8 characters.");
+    if (pw.length < 24) return setError("Password must be at least 24 characters.");
     if (pw !== confirm) return setError("Passwords don't match.");
     onDone();
   }
@@ -1150,7 +1151,7 @@ function RestorePassword({ onBack, onDone, ui }) {
 
           <label style={S.label}>{u.pwNew || "New password"}</label>
           <div style={{ position: "relative" }}>
-            <input className="no-drag" type={show ? "text" : "password"} value={pw} placeholder="Enter a strong password"
+            <input className="no-drag" type={show ? "text" : "password"} value={pw} placeholder="At least 24 characters"
               onChange={e => { setPw(e.target.value); setError(""); }} style={S.input} />
             <button onClick={() => setShow(s => !s)} style={{ position: "absolute", right: 12, top: 11, background: "transparent", border: "none", color: "#8b8da3", cursor: "pointer" }}>
               {show ? I.eyeOff : I.eye}
@@ -1164,7 +1165,9 @@ function RestorePassword({ onBack, onDone, ui }) {
                   <div key={i} style={{ flex: 1, height: 4, borderRadius: 2, background: i < strength ? colors[strength] : "#1f2130" }} />
                 ))}
               </div>
-              <span style={{ fontSize: 12, color: colors[strength], marginTop: 4, display: "inline-block" }}>{labels[strength]}</span>
+              <span style={{ fontSize: 12, color: longEnough ? colors[strength] : "#ff6b6b", marginTop: 4, display: "inline-block" }}>
+                {longEnough ? labels[strength] : `${pw.length} / 24 characters minimum`}
+              </span>
             </div>
           )}
 
@@ -1174,9 +1177,9 @@ function RestorePassword({ onBack, onDone, ui }) {
 
           {error && <div style={{ color: "#ff6b6b", fontSize: 13, marginTop: 12 }}>{error}</div>}
 
-          <div style={{ ...S.warnCard, marginTop: 18, fontSize: 12.5 }}>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: "#ff6b6b14", border: "1px solid #ff6b6b44", color: "#ff8f8f", borderRadius: 12, padding: 14, marginTop: 18, fontSize: 12.5, lineHeight: 1.5 }}>
             {I.warn}
-            <span>{u.pwWarn || "Demo only — this password isn't actually used to encrypt anything. Never reuse a real wallet password here."}</span>
+            <span>{u.pwWarn || "IMPORTANT: There is no password recovery. If you lose this password, your wallet is gone forever. (Note: this is an educational demo — no real encryption is performed and no real funds are at risk.)"}</span>
           </div>
 
           <button className="no-drag" style={{ ...S.primaryBtn, width: "100%", marginTop: 18, padding: 15,
