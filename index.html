@@ -620,6 +620,22 @@ function dataTxToUi(t, i, price) {
   };
 }
 
+/* Coin logo from the CC0 "cryptocurrency-icons" set via jsDelivr, with a letter fallback.
+   Icon ids match our coin ids (btc, eth, usdt, sol, ada, trx, usdc). */
+const COIN_ICON_BASE = "https://cdn.jsdelivr.net/npm/cryptocurrency-icons@0.18.1/svg/color/";
+function CoinIcon({ coin, size = 34, style }) {
+  const [failed, setFailed] = useState(false);
+  const base = { width: size, height: size, borderRadius: "50%", flexShrink: 0, ...(style || {}) };
+  if (!failed) {
+    return <img src={COIN_ICON_BASE + coin.id + ".svg"} alt={coin.symbol} width={size} height={size}
+                onError={() => setFailed(true)} style={{ ...base, display: "block" }} />;
+  }
+  return (
+    <div style={{ ...base, background: coin.color + "22", border: `1px solid ${coin.color}55`, display: "grid", placeItems: "center",
+                  color: coin.color, fontWeight: 800, fontSize: Math.round(size * 0.44) }}>{coin.symbol[0]}</div>
+  );
+}
+
 function App() {
   const [screen, setScreen] = useState("welcome"); // welcome | restore | app
   const [tab, setTab] = useState("portfolio");
@@ -1051,8 +1067,7 @@ function App() {
                     style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", cursor: "pointer",
                              background: rowActive ? "#1c1e2e" : "transparent", border: rowActive ? "1px solid #2b2e44" : "1px solid transparent",
                              borderRadius: 10, padding: "8px 8px", color: "#fff", fontFamily: "inherit" }}>
-                    <div style={{ width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: c.color + "22", border: `1px solid ${c.color}55`,
-                                  display: "grid", placeItems: "center", color: c.color, fontWeight: 800, fontSize: 15 }}>{isUsdtRow ? "₮" : c.symbol[0]}</div>
+                    <CoinIcon coin={c} size={34} />
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontWeight: 600, fontSize: 12.5, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
                       <div style={{ fontSize: 11, color: "#8b8da3", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -1497,7 +1512,7 @@ function Portfolio({ coins, totalUSD, totalChange, hideBalances, setHideBalances
             <button key={c.id} style={S.assetRow} onClick={() => setSelectedCoin(c)}
               onMouseEnter={e => e.currentTarget.style.background = "#1c1e2e"}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <div style={{ ...S.coinDot, background: c.color + "22", color: c.color }}>{c.symbol[0]}</div>
+              <CoinIcon coin={c} size={40} />
               <div style={{ textAlign: "left", flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 15 }}>{c.name}</div>
                 <div style={{ color: "#8b8da3", fontSize: 13 }}>{hideBalances ? "••••" : fmtCrypto(c.balance, c.symbol)}</div>
@@ -1547,7 +1562,7 @@ function CoinDetail({ coin, back, onReceive, onSendClick, userTxns, fileTxns, ui
     <div>
       <button style={{ ...S.ghostBtn, marginBottom: 18 }} onClick={back}>← {u.navPortfolio || "Portfolio"}</button>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 22 }}>
-        <div style={{ ...S.coinDot, width: 52, height: 52, fontSize: 22, background: coin.color + "22", color: coin.color }}>{coin.symbol[0]}</div>
+        <CoinIcon coin={coin} size={52} />
         <div>
           <h1 style={{ fontSize: 26, margin: 0, fontWeight: 700 }}>{coin.name}</h1>
           <span style={{ color: "#8b8da3" }}>{fmtUSD(coin.price)} · <span style={{ color: coin.change >= 0 ? "#3ddc97" : "#ff6b6b" }}>{coin.change >= 0 ? "+" : ""}{coin.change}%</span></span>
@@ -1659,7 +1674,7 @@ function SendView({ coins, sendTransaction, goPortfolio, ui }) {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
         {coins.map(c => (
           <button key={c.id} onClick={() => { setCoin(c); setError(""); }} style={{ ...S.chip, ...(coin.id === c.id ? { borderColor: c.color, background: c.color + "1a" } : {}) }}>
-            <span style={{ color: c.color, fontWeight: 700 }}>{c.symbol[0]}</span> {c.symbol}
+            <CoinIcon coin={c} size={18} style={{ display: "inline-block", verticalAlign: "middle", marginRight: 6 }} /> {c.symbol}
           </button>
         ))}
       </div>
@@ -1706,7 +1721,7 @@ function ReceiveView({ coins, copy, copied, walletAddress, ui }) {
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
         {coins.map(c => (
           <button key={c.id} onClick={() => setCoin(c)} style={{ ...S.chip, ...(coin.id === c.id ? { borderColor: c.color, background: c.color + "1a" } : {}) }}>
-            <span style={{ color: c.color, fontWeight: 700 }}>{c.symbol[0]}</span> {c.symbol}
+            <CoinIcon coin={c} size={18} style={{ display: "inline-block", verticalAlign: "middle", marginRight: 6 }} /> {c.symbol}
           </button>
         ))}
       </div>
