@@ -464,42 +464,72 @@ async function enrichTrxWallets(wallets) {
   const TRONGRID_API_KEY = "";
 
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"; // USDT (TRC-20) on TRON mainnet
 
-  async function trxBalance(address) {
-    // TronScan's account endpoint blocks browser CORS, so TronGrid is the only
-    // viable source here. It rate-limits without a key: retry with back-off.
+  // TronGrid GET with 429 back-off and optional API key.
+  async function tronGridGet(path) {
     const headers = TRONGRID_API_KEY ? { "TRON-PRO-API-KEY": TRONGRID_API_KEY } : {};
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
-        const r = await fetch("https://api.trongrid.io/v1/accounts/" + encodeURIComponent(address), { cache: "no-store", headers });
+        const r = await fetch("https://api.trongrid.io" + path, { cache: "no-store", headers });
         if (r.status === 429) { await sleep(800 * (attempt + 1)); continue; }
         if (!r.ok) throw new Error("HTTP " + r.status);
-        const j = await r.json();
-        console.log("[TRX] TronGrid account", address, j);
-        const sun = j && j.data && j.data[0] && j.data[0].balance;
-        if (typeof sun === "number") return sun / SUN;
-        if (j && j.data && j.data.length === 0) return 0; // never-funded address
-        return null;
-      } catch (e) { console.warn("[TRX] TronGrid account failed", address, e.message); await sleep(500); }
+        return await r.json();
+      } catch (e) { console.warn("[TRX] TronGrid failed", path, e.message); await sleep(500); }
     }
-    // Fallback: public full-node RPC (same data, different host/rate-limit pool).
+    return null;
+  }
+
+  // Returns { trx, usdt } balances (whole units) or nulls if unavailable.
+  async function trxBalances(address) {
+    const j = await tronGridGet("/v1/accounts/" + encodeURIComponent(address));
+    console.log("[TRX] TronGrid account", address, j);
+    if (j && j.data) {
+      if (j.data.length === 0) return { trx: 0, usdt: 0 }; // never-funded address
+      const acct = j.data[0];
+      let usdt = 0;
+      for (const entry of (acct.trc20 || [])) {
+        if (entry && entry[USDT_CONTRACT] != null) usdt = (+entry[USDT_CONTRACT] || 0) / SUN; // USDT has 6 decimals
+      }
+      return { trx: typeof acct.balance === "number" ? acct.balance / SUN : 0, usdt };
+    }
+    // Fallback: public full-node RPC for TRX only (no token balances).
     for (const host of ["https://api.tronstack.io", "https://tron-rpc.publicnode.com"]) {
       try {
         const r = await fetch(host + "/wallet/getaccount", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ address, visible: true }) });
         if (!r.ok) continue;
-        const j = await r.json();
-        console.log("[TRX] node getaccount", host, address, j);
-        if (j && typeof j.balance === "number") return j.balance / SUN;
-        if (j && Object.keys(j).length === 0) return 0; // unfunded address returns {}
+        const a = await r.json();
+        console.log("[TRX] node getaccount", host, address, a);
+        if (a && typeof a.balance === "number") return { trx: a.balance / SUN, usdt: null };
+        if (a && Object.keys(a).length === 0) return { trx: 0, usdt: null };
       } catch (e) { console.warn("[TRX] node getaccount failed", host, e.message); }
     }
-    return null;
+    return { trx: null, usdt: null };
+  }
+
+  // USDT (TRC-20) transfers via TronGrid — returns base58 addresses directly.
+  async function usdtTransfers(address) {
+    const j = await tronGridGet("/v1/accounts/" + encodeURIComponent(address) +
+      "/transactions/trc20?limit=50&contract_address=" + USDT_CONTRACT);
+    console.log("[TRX] TronGrid USDT transfers", address, j);
+    if (!j || !Array.isArray(j.data)) return null;
+    const now = Date.now();
+    return j.data
+      .filter(t => t && t.type === "Transfer" && t.value != null)
+      .map(t => {
+        const dec = (t.token_info && t.token_info.decimals) || 6;
+        const isRecv = String(t.to || "").toLowerCase() === String(address).toLowerCase();
+        const days = t.block_timestamp ? Math.max(0, Math.round((now - t.block_timestamp) / 86400000)) : 0;
+        return { symbol: "USDT", type: isRecv ? "receive" : "send",
+                 amount: (+t.value || 0) / Math.pow(10, dec), daysAgo: days,
+                 counterparty: shortAddr(isRecv ? t.from : t.to), ts: t.block_timestamp || 0 };
+      });
   }
 
   async function trxTransfers(address) {
     try {
-      const j = await fetchJson("https://apilist.tronscanapi.com/api/transfer?address=" + encodeURIComponent(address) + "&limit=20&start=0&sort=-timestamp");
+      const j = await fetchJson("https://apilist.tronscanapi.com/api/transfer?address=" + encodeURIComponent(address) + "&limit=50&start=0&sort=-timestamp");
       console.log("[TRX] TronScan transfers", address, j);
       const list = (j && j.data) || [];
       const now = Date.now();
@@ -509,10 +539,12 @@ async function enrichTrxWallets(wallets) {
           const isRecv = String(t.transferToAddress || "").toLowerCase() === String(address).toLowerCase();
           const days = t.timestamp ? Math.max(0, Math.round((now - t.timestamp) / 86400000)) : 0;
           return {
+            symbol: "TRX",
             type: isRecv ? "receive" : "send",
             amount: (+t.amount || 0) / SUN,
             daysAgo: days,
             counterparty: shortAddr(isRecv ? t.transferFromAddress : t.transferToAddress),
+            ts: t.timestamp || 0,
           };
         });
     } catch (e) { console.warn("[TRX] TronScan transfers failed", address, e.message); return null; }
@@ -522,16 +554,21 @@ async function enrichTrxWallets(wallets) {
   for (const w of wallets) {
     if (!w || String(w.symbol || "").toUpperCase() !== "TRX") { out.push(w); continue; }
     if (!w.address || /PASTE_YOUR/i.test(w.address)) { out.push(w); continue; } // placeholder untouched
-    const txs = await trxTransfers(w.address);   // TronScan (CORS-open)
-    const bal = await trxBalance(w.address);     // TronGrid (rate-limited, sequential)
-    console.log("[TRX] enriched", w.name, "balance:", bal, "transfers:", txs ? txs.length : null);
+    const trxTxs  = await trxTransfers(w.address);   // TronScan (CORS-open)
+    const bals    = await trxBalances(w.address);    // TronGrid (sequential, back-off)
+    const usdtTxs = await usdtTransfers(w.address);  // TronGrid
+    const merged = [...(trxTxs || []), ...(usdtTxs || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const anyTx = trxTxs != null || usdtTxs != null;
+    console.log("[TRX] enriched", w.name, "TRX:", bals.trx, "USDT:", bals.usdt,
+                "TRX txs:", trxTxs ? trxTxs.length : null, "USDT txs:", usdtTxs ? usdtTxs.length : null);
     out.push({
       ...w,
-      balance: bal == null ? w.balance : bal,
-      transactions: txs == null ? (w.transactions || []) : txs,
-      live: bal != null,
-      liveStatus: bal != null ? "ok" : "unavailable",
-      liveTxCount: txs == null ? null : txs.length,
+      balance: bals.trx == null ? w.balance : bals.trx,
+      usdtBalance: bals.usdt,
+      transactions: anyTx ? merged : (w.transactions || []),
+      live: bals.trx != null,
+      liveStatus: bals.trx != null ? "ok" : "unavailable",
+      liveTxCount: anyTx ? merged.length : null,
     });
   }
   return out;
@@ -755,14 +792,20 @@ function App() {
 
   // When the active wallet (from the data file) changes, load its BTC balance.
   useEffect(() => {
-    if (wallet) setBalances(b => ({ ...b, [activeCoinId]: wallet.balance }));
+    if (!wallet) return;
+    setBalances(b => ({ ...b, [activeCoinId]: wallet.balance,
+      ...(activeCoinId === "trx" && wallet.usdtBalance != null ? { usdt: wallet.usdtBalance } : {}) }));
   }, [activeWallet, walletData]);
 
   // Transactions from the data file, mapped to the UI shape (BTC).
   const fileTxns = useMemo(() => {
     if (!wallet || !wallet.transactions) return [];
-    const price = (liveBtc.price != null ? liveBtc.price : prices[activeCoinId]);
-    return wallet.transactions.map((t, i) => ({ ...dataTxToUi(t, i, price), coinId: activeCoinId }));
+    const livePrice = (liveBtc.price != null ? liveBtc.price : prices[activeCoinId]);
+    return wallet.transactions.map((t, i) => {
+      const cid = (t.symbol === "USDT") ? "usdt" : activeCoinId;
+      const price = cid === "usdt" ? (prices.usdt || 1) : livePrice;
+      return { ...dataTxToUi(t, i, price), coinId: cid };
+    });
   }, [wallet, liveBtc, prices, activeCoinId]);
 
   // Fetch the real BTC/USD price. Tries multiple public exchange APIs so it works
@@ -800,14 +843,16 @@ function App() {
   const coins = useMemo(() => {
     let list = COINS.map(c => ({ ...c, price: prices[c.id], balance: balances[c.id] }));
     if (singleCoin) {
-      list = list.filter(c => c.id === activeCoinId).map(c => ({
+      const keep = new Set([activeCoinId]);
+      if (activeCoinId === "trx" && wallet && wallet.usdtBalance != null) keep.add("usdt");
+      list = list.filter(c => keep.has(c.id)).map(c => c.id === activeCoinId ? ({
         ...c,
         price: liveBtc.price != null ? liveBtc.price : c.price,
         change: liveBtc.change != null ? liveBtc.change : c.change,
-      }));
+      }) : ({ ...c, price: 1.0, change: 0 }));
     }
     return list;
-  }, [prices, balances, singleCoin, liveBtc, activeCoinId]);
+  }, [prices, balances, singleCoin, liveBtc, activeCoinId, wallet]);
 
   // Simulated send: validates funds, deducts balance + fee, records a transaction.
   // Does NOT broadcast to any real network — demo only.
@@ -931,6 +976,7 @@ function App() {
               <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.4 }}>
                 <div style={{ color: "#fff", fontWeight: 600 }}>
                   {(+wallet.balance).toLocaleString("en-US", { maximumFractionDigits: 6 })} TRX
+                  {wallet.usdtBalance != null && <span style={{ color: "#26a17b" }}> · {(+wallet.usdtBalance).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</span>}
                 </div>
                 <div style={{ color: wallet.liveStatus === "ok" ? "#3ddc97" : "#ffb454" }}>
                   {wallet.liveStatus === "ok"
@@ -1596,7 +1642,7 @@ function ReceiveView({ coins, copy, copied, walletAddress, ui }) {
 }
 
 function ReceiveCard({ coin, copy, copied, walletAddress }) {
-  const addr = ((coin.id === "btc" || coin.id === "trx") && walletAddress) ? walletAddress : (MOCK_ADDRESSES[coin.id] || walletAddress || "");
+  const addr = ((coin.id === "btc" || coin.id === "trx" || coin.id === "usdt") && walletAddress) ? walletAddress : (MOCK_ADDRESSES[coin.id] || walletAddress || "");
   return (
     <div style={{ ...S.card, textAlign: "center" }}>
       <QR text={addr} />
