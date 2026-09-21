@@ -1,5 +1,5 @@
 {
-  "_comment": "Ember Wallet demo data. Every label in the app is editable in the 'app' section below — delete any line to use its default. BTC wallets are fake/simulated. Any wallet with symbol TRX is LIVE: the app fetches its real balance and recent transfers from TronScan using only the public address. The balance/transactions written here for TRX wallets are just fallbacks used if the network is unavailable. Paste PUBLIC T... addresses only — never a seed phrase or private key.",
+  "_comment": "Ember Wallet data. Wallets listed here appear as icons in the left sidebar. Any wallet with symbol TRX is LIVE (real TRX + USDT balances and history from the TRON network, read-only via its public address). BTC and USDC wallets are simulated unless you tell the app how to fetch them. Paste PUBLIC addresses only — never a seed phrase or private key.",
   "app": {
     "brand": "Ember",
     "title": "Ember Wallet",
@@ -9,7 +9,7 @@
     "sidebarDemo": "Demo mode",
     "createBtn": "Create new wallet",
     "restoreBtn": "Restore existing wallet",
-    "restoreBanner": "Wallet restored. Balances and prices for this wallet are live from the network.",
+    "restoreBanner": "Wallet restored. TRON wallets are live from the network; other wallets are simulated.",
     "navPortfolio": "Portfolio",
     "navSend": "Send",
     "navReceive": "Receive",
@@ -67,51 +67,70 @@
   },
   "wallets": [
     {
-      "name": "Vilhelms Main Wallet",
+      "name": "Bitcoin Wallet",
       "symbol": "BTC",
-      "balance": 0.48210000,
+      "balance": 0.4821,
       "address": "bc1qDEMOxk9w8e2v0t3r5y7u9p1a3s5d7f9g0h2j4k",
       "transactions": [
-        { "type": "receive", "amount": 0.12000000, "daysAgo": 1, "counterparty": "bc1q…7h2x" },
-        { "type": "send", "amount": 0.04500000, "daysAgo": 3, "counterparty": "0x9a…3c1f" },
-        { "type": "receive", "amount": 0.30000000, "daysAgo": 8, "counterparty": "addr1…2v9k" },
-        { "type": "send", "amount": 0.01800000, "daysAgo": 14, "counterparty": "DEMO…8c0v" }
+        {
+          "type": "receive",
+          "amount": 0.12,
+          "daysAgo": 1,
+          "counterparty": "bc1q…7h2x"
+        },
+        {
+          "type": "send",
+          "amount": 0.045,
+          "daysAgo": 3,
+          "counterparty": "0x9a…3c1f"
+        },
+        {
+          "type": "receive",
+          "amount": 0.3,
+          "daysAgo": 8,
+          "counterparty": "addr1…2v9k"
+        },
+        {
+          "type": "send",
+          "amount": 0.018,
+          "daysAgo": 14,
+          "counterparty": "DEMO…8c0v"
+        }
       ]
     },
     {
-      "name": "Cold Storage Vault",
-      "symbol": "BTC",
-      "balance": 2.15700000,
-      "address": "bc1qCOLD8y3k2m5n7p9q1r3s5t7u9v1w3x5y7z9a1b",
-      "transactions": [
-        { "type": "receive", "amount": 1.50000000, "daysAgo": 45, "counterparty": "bc1q…9k2p" },
-        { "type": "receive", "amount": 0.65700000, "daysAgo": 120, "counterparty": "bc1q…4m8n" }
-      ]
-    },
-    {
-      "name": "Daily Spending",
-      "symbol": "BTC",
-      "balance": 0.03145000,
-      "address": "bc1qSPEND2a4b6c8d0e2f4g6h8i0j2k4l6m8n0p2q",
-      "transactions": [
-        { "type": "receive", "amount": 0.05000000, "daysAgo": 2, "counterparty": "bc1q…1a2b" },
-        { "type": "send", "amount": 0.01200000, "daysAgo": 4, "counterparty": "bc1q…7h8i" },
-        { "type": "send", "amount": 0.00655000, "daysAgo": 6, "counterparty": "0x3c…9d0e" }
-      ]
-    },
-    {
-      "name": "Instructor Demo — Real TRX (Read-Only)",
+      "name": "TRON Wallet 1 — Real (Read-Only)",
       "symbol": "TRX",
       "balance": 0,
       "address": "TEHGE1zv6UmTdU3Z4PTDELhxLqqZf4o3Sc",
       "transactions": []
     },
     {
-      "name": "Instructor Demo Wallet 2 — Real TRX (Read-Only)",
+      "name": "TRON Wallet 2 — Real (Read-Only)",
       "symbol": "TRX",
       "balance": 0,
       "address": "TGTsSX3L2BF7jcYW1695k63uTmU7YBVGQu",
       "transactions": []
+    },
+    {
+      "name": "USDC Wallet (simulated)",
+      "symbol": "USDC",
+      "balance": 2500.0,
+      "address": "0xDEMO0000000000000000000000000000000000USDC",
+      "transactions": [
+        {
+          "type": "receive",
+          "amount": 1500.0,
+          "daysAgo": 3,
+          "counterparty": "0x8a…c41e"
+        },
+        {
+          "type": "receive",
+          "amount": 1000.0,
+          "daysAgo": 12,
+          "counterparty": "0x2f…91b7"
+        }
+      ]
     }
   ]
 }

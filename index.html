@@ -345,6 +345,7 @@ const COINS = [
   { id: "sol", name: "Solana", symbol: "SOL", color: "#14f195", price: 168.42, balance: 12.7, change: 5.67 },
   { id: "ada", name: "Cardano", symbol: "ADA", color: "#0033ad", price: 0.612, balance: 940.0, change: -2.88 },
   { id: "trx", name: "TRON", symbol: "TRX", color: "#ff060a", price: 0.12, balance: 0, change: 0 },
+  { id: "usdc", name: "USD Coin", symbol: "USDC", color: "#2775ca", price: 1.0, balance: 0, change: 0 },
 ];
 
 const MOCK_ADDRESSES = {
@@ -582,7 +583,7 @@ async function enrichTrxWallets(wallets) {
   const out = [];
   for (const w of wallets) {
     if (!w || String(w.symbol || "").toUpperCase() !== "TRX") { out.push(w); continue; }
-    if (!w.address || /PASTE_YOUR/i.test(w.address)) { out.push(w); continue; } // placeholder untouched
+    if (!w.address || /PASTE_YOUR/i.test(w.address)) { out.push({ ...w, liveStatus: "placeholder" }); continue; } // placeholder untouched
     const trxPage  = await trxTransfersPage(w.address, 0);   // TronScan (CORS-open)
     const bals     = await trxBalances(w.address);           // TronGrid (sequential, back-off)
     const usdtPage = await usdtTransfersPage(w.address, null); // TronGrid
@@ -833,10 +834,10 @@ function App() {
     } finally { setLoadingMore(false); }
   }
   // The coin the active wallet is denominated in ("btc" unless the file says TRX).
-  const activeCoinId = (wallet && String(wallet.symbol || "BTC").toUpperCase() === "TRX") ? "trx" : "btc";
+  const activeCoinId = (COINS.find(c => c.symbol === String((wallet && wallet.symbol) || "BTC").toUpperCase()) || COINS[0]).id;
   const activeCoin = COINS.find(c => c.id === activeCoinId) || COINS[0];
   // Single-coin ("live") view: after a private-key restore, or whenever the active wallet is TRX.
-  const singleCoin = btcOnly || activeCoinId === "trx";
+  const singleCoin = btcOnly || activeCoinId !== "btc"; // non-BTC wallets always get the focused single-coin view
 
   // When the active wallet (from the data file) changes, load its BTC balance.
   useEffect(() => {
@@ -861,9 +862,14 @@ function App() {
   async function fetchBtcPrice() {
     // Despite the name, this fetches the live USD price of whichever coin the
     // active wallet uses (BTC or TRX), so the same code path serves both.
-    const sym = activeCoin.symbol;           // "BTC" | "TRX"
-    const gecko = sym === "TRX" ? "tron" : "bitcoin";
-    const dec = sym === "TRX" ? 4 : 2;
+    const sym = activeCoin.symbol;           // "BTC" | "TRX" | "USDC" | ...
+    if (sym === "USDC" || sym === "USDT") {  // stablecoins: pin to $1, no network call
+      setLiveBtc({ price: 1.0, change: 0, status: "ok", source: "pegged" });
+      setPrices(p => ({ ...p, [activeCoinId]: 1.0 }));
+      return;
+    }
+    const gecko = ({ BTC: "bitcoin", TRX: "tron", ETH: "ethereum", SOL: "solana", ADA: "cardano" })[sym] || "bitcoin";
+    const dec = sym === "BTC" ? 2 : 4;
     setLiveBtc(s => ({ ...s, status: "loading" }));
     const sources = [
       { name: "Binance", url: `https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`,
@@ -1016,51 +1022,59 @@ function App() {
             <span style={{ fontWeight: 700, fontSize: 17 }}>{ui.brand}</span>
           </div>
 
-          {/* Active wallet (from data file) */}
-          <div style={{ background: "#13141f", border: "1px solid #1f2130", borderRadius: 12, padding: "10px 12px", marginBottom: 14 }}>
-            <div style={{ fontSize: 10.5, color: "#5a5c70", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>{ui.activeWalletLabel}</div>
-            <div style={{ fontWeight: 600, fontSize: 13.5, lineHeight: 1.3 }}>{wallet ? wallet.name : "—"}</div>
-            {wallet && activeCoinId === "trx" && (
-              <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.4 }}>
-                <div style={{ color: "#fff", fontWeight: 600 }}>
-                  {(+wallet.balance).toLocaleString("en-US", { maximumFractionDigits: 6 })} TRX
-                  {wallet.usdtBalance != null && <span style={{ color: "#26a17b" }}> · {(+wallet.usdtBalance).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</span>}
-                </div>
-                {wallet.trxStaked > 0 && (
-                  <div style={{ color: "#8b8da3", fontSize: 11 }}>
-                    {(+wallet.trxLiquid).toLocaleString("en-US", { maximumFractionDigits: 2 })} available · {(+wallet.trxStaked).toLocaleString("en-US", { maximumFractionDigits: 2 })} staked
-                  </div>
-                )}
-                <div style={{ color: wallet.liveStatus === "ok" ? "#3ddc97" : "#ffb454" }}>
-                  {wallet.liveStatus === "ok"
-                    ? `● Live from TRON · ${wallet.liveTxCount == null ? "" : wallet.liveTxCount + " transfers"}`
-                    : wallet.liveStatus === "unavailable"
-                      ? "● Balance unavailable (API rate-limited) — showing file value"
-                      : "● Fetching live data…"}
-                </div>
+          {/* Wallet list (from data file) — click a row to switch */}
+          <div style={{ background: "#13141f", border: "1px solid #1f2130", borderRadius: 12, padding: "10px 8px", marginBottom: 14 }}>
+            <div style={{ fontSize: 10.5, color: "#5a5c70", textTransform: "uppercase", letterSpacing: 0.5, margin: "0 4px 8px" }}>Wallets</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {walletData.map((w, i) => {
+                const sym = String(w.symbol || "BTC").toUpperCase();
+                const c = COINS.find(x => x.symbol === sym) || COINS[0];
+                const isTrx = sym === "TRX";
+                const active = i === activeWallet;
+                const bal = (+w.balance || 0).toLocaleString("en-US", { maximumFractionDigits: isTrx ? 2 : 6 });
+                const live = isTrx ? w.liveStatus : null;
+                return (
+                  <button key={i} className="no-drag" onClick={() => { setActiveWallet(i); setSelectedCoin(null); }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", cursor: "pointer",
+                             background: active ? "#1c1e2e" : "transparent", border: active ? "1px solid #2b2e44" : "1px solid transparent",
+                             borderRadius: 10, padding: "8px 8px", color: "#fff", fontFamily: "inherit" }}>
+                    <div style={{ position: "relative", flexShrink: 0 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: c.color + "22", border: `1px solid ${c.color}55`,
+                                    display: "grid", placeItems: "center", color: c.color, fontWeight: 800, fontSize: 15 }}>{c.symbol[0]}</div>
+                      {isTrx && (
+                        <div title="USDT (TRC-20)" style={{ position: "absolute", right: -4, bottom: -4, width: 16, height: 16, borderRadius: "50%",
+                                      background: "#26a17b", border: "2px solid #13141f", display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 800 }}>₮</div>
+                      )}
+                    </div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 12.5, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{w.name}</div>
+                      <div style={{ fontSize: 11, color: "#8b8da3", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {bal} {sym}
+                        {isTrx && w.usdtBalance != null && <span style={{ color: "#26a17b" }}> · {(+w.usdtBalance).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</span>}
+                      </div>
+                      {isTrx && (
+                        <div style={{ fontSize: 10, lineHeight: 1.3, color: live === "ok" ? "#3ddc97" : live === "placeholder" ? "#ff6b6b" : "#ffb454" }}>
+                          {live === "ok" ? `● Live · ${w.liveTxCount == null ? "" : w.liveTxCount + " transfers"}`
+                           : live === "unavailable" ? "● Live data unavailable"
+                           : live === "placeholder" ? "● No address set"
+                           : "● Fetching…"}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            {wallet && activeCoinId === "trx" && wallet.trxStaked > 0 && (
+              <div style={{ margin: "8px 4px 0", color: "#8b8da3", fontSize: 10.5 }}>
+                {(+wallet.trxLiquid).toLocaleString("en-US", { maximumFractionDigits: 2 })} available · {(+wallet.trxStaked).toLocaleString("en-US", { maximumFractionDigits: 2 })} staked
               </div>
             )}
-            {walletData.length > 1 && (
-              <select className="no-drag" value={activeWallet}
-                onChange={e => { setActiveWallet(+e.target.value); setSelectedCoin(null); }}
-                style={{ width: "100%", marginTop: 8, background: "#0e0f1a", color: "#fff", border: "1px solid #242638", borderRadius: 8, padding: "6px 8px", fontSize: 12, fontFamily: "inherit", cursor: "pointer" }}>
-                {walletData.map((w, i) => <option key={i} value={i}>{w.name}</option>)}
-              </select>
-            )}
-            <label className="no-drag" style={{ display: "block", marginTop: 10, fontSize: 12, color: "#fff", cursor: "pointer", fontWeight: 600, background: "linear-gradient(135deg,#7c5cff,#4d7cff)", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-              ↥ {dataSource === "imported" ? "Re-import file" : "Load wallet file"}
-              <input type="file" accept=".txt,.json,application/json,text/plain" style={{ display: "none" }}
-                onChange={e => { if (e.target.files[0]) importWalletFile(e.target.files[0]); e.target.value = ""; }} />
-            </label>
-            {importMsg && (
-              <div style={{ marginTop: 8, fontSize: 11, lineHeight: 1.4, color: importMsg.ok ? "#3ddc97" : "#ff6b6b" }}>
-                {importMsg.ok ? "✓ " : "✕ "}{importMsg.text}
-              </div>
-            )}
-            {dataSource === "embedded" && (
-              <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.4, color: "#ffb340" }}>
-                Showing built-in data. The web link will load automatically, or pick a file above.
-              </div>
+            {/* Hidden file input kept for the file:// auto-load fallback; no visible button. */}
+            <input type="file" accept=".txt,.json,application/json,text/plain" style={{ display: "none" }}
+              onChange={e => { if (e.target.files[0]) importWalletFile(e.target.files[0]); e.target.value = ""; }} />
+            {importMsg && !importMsg.ok && (
+              <div style={{ margin: "8px 4px 0", fontSize: 11, lineHeight: 1.4, color: "#ff6b6b" }}>✕ {importMsg.text}</div>
             )}
           </div>
 
@@ -1502,13 +1516,13 @@ function Allocation({ coins, totalUSD }) {
   return (
     <div style={{ marginTop: 24 }}>
       <div style={{ display: "flex", height: 10, borderRadius: 6, overflow: "hidden", gap: 2 }}>
-        {coins.map(c => <div key={c.id} title={`${c.symbol}`} style={{ width: `${(c.balance * c.price) / totalUSD * 100}%`, background: c.color }} />)}
+        {coins.map(c => <div key={c.id} title={`${c.symbol}`} style={{ width: `${totalUSD ? (c.balance * c.price) / totalUSD * 100 : 0}%`, background: c.color }} />)}
       </div>
       <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
         {coins.map(c => (
           <span key={c.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8b8da3" }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color }} />
-            {c.symbol} {((c.balance * c.price) / totalUSD * 100).toFixed(1)}%
+            {c.symbol} {(totalUSD ? (c.balance * c.price) / totalUSD * 100 : 0).toFixed(1)}%
           </span>
         ))}
       </div>
@@ -1696,7 +1710,7 @@ function ReceiveView({ coins, copy, copied, walletAddress, ui }) {
 }
 
 function ReceiveCard({ coin, copy, copied, walletAddress }) {
-  const addr = ((coin.id === "btc" || coin.id === "trx" || coin.id === "usdt") && walletAddress) ? walletAddress : (MOCK_ADDRESSES[coin.id] || walletAddress || "");
+  const addr = walletAddress || MOCK_ADDRESSES[coin.id] || "";
   return (
     <div style={{ ...S.card, textAlign: "center" }}>
       <QR text={addr} />
