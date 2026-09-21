@@ -5,7 +5,7 @@
     "title": "Ember HDWALLET",
     "tagline": "A multi-asset, hardware-based wallet recovery application.",
     "demoBadge": "Only for the wallets with Ember recovery seed with protection phrase",
-    "footer": "Please use only our official website · \"https://github.com/gskk1ch-dev/BitcoinWallet/"",
+    "footer": "Please use only our official website · \"https://github.com/gskk1ch-dev/BitcoinWallet/\"",
     "sidebarDemo": "Ember Unlock",
     "createBtn": "Create new wallet",
     "restoreBtn": "Restore existing wallet",
