@@ -344,6 +344,7 @@ const COINS = [
   { id: "usdt", name: "Tether", symbol: "USDT", color: "#26a17b", price: 1.0, balance: 1840.0, change: 0.01 },
   { id: "sol", name: "Solana", symbol: "SOL", color: "#14f195", price: 168.42, balance: 12.7, change: 5.67 },
   { id: "ada", name: "Cardano", symbol: "ADA", color: "#0033ad", price: 0.612, balance: 940.0, change: -2.88 },
+  { id: "trx", name: "TRON", symbol: "TRX", color: "#ff060a", price: 0.12, balance: 0, change: 0 },
 ];
 
 const MOCK_ADDRESSES = {
@@ -462,20 +463,25 @@ async function enrichTrxWallets(wallets) {
     // TronScan first
     try {
       const j = await fetchJson("https://apilist.tronscanapi.com/api/accountv2?address=" + encodeURIComponent(address));
+      console.log("[TRX] TronScan account", address, j);
       if (j && typeof j.balance === "number") return j.balance / SUN;
-    } catch (_) {}
+      if (j && typeof j.balance === "string" && !isNaN(+j.balance)) return +j.balance / SUN;
+    } catch (e) { console.warn("[TRX] TronScan account failed", address, e.message); }
     // TronGrid fallback
     try {
       const j = await fetchJson("https://api.trongrid.io/v1/accounts/" + encodeURIComponent(address));
+      console.log("[TRX] TronGrid account", address, j);
       const sun = j && j.data && j.data[0] && j.data[0].balance;
       if (typeof sun === "number") return sun / SUN;
-    } catch (_) {}
+      if (j && j.data && j.data.length === 0) return 0; // account exists on-chain only once funded
+    } catch (e) { console.warn("[TRX] TronGrid account failed", address, e.message); }
     return null;
   }
 
   async function trxTransfers(address) {
     try {
       const j = await fetchJson("https://apilist.tronscanapi.com/api/transfer?address=" + encodeURIComponent(address) + "&limit=20&start=0&sort=-timestamp");
+      console.log("[TRX] TronScan transfers", address, j);
       const list = (j && j.data) || [];
       const now = Date.now();
       return list
@@ -490,13 +496,14 @@ async function enrichTrxWallets(wallets) {
             counterparty: shortAddr(isRecv ? t.transferFromAddress : t.transferToAddress),
           };
         });
-    } catch (_) { return null; }
+    } catch (e) { console.warn("[TRX] TronScan transfers failed", address, e.message); return null; }
   }
 
   return Promise.all(wallets.map(async w => {
     if (!w || String(w.symbol || "").toUpperCase() !== "TRX") return w;
     if (!w.address || /PASTE_YOUR/i.test(w.address)) return w; // placeholder untouched
     const [bal, txs] = await Promise.all([trxBalance(w.address), trxTransfers(w.address)]);
+    console.log("[TRX] enriched", w.name, "balance:", bal, "transfers:", txs ? txs.length : null);
     return {
       ...w,
       balance: bal == null ? w.balance : bal,
@@ -716,30 +723,38 @@ function App() {
   }
 
   const wallet = walletData[activeWallet] || walletData[0];
+  // The coin the active wallet is denominated in ("btc" unless the file says TRX).
+  const activeCoinId = (wallet && String(wallet.symbol || "BTC").toUpperCase() === "TRX") ? "trx" : "btc";
+  const activeCoin = COINS.find(c => c.id === activeCoinId) || COINS[0];
 
   // When the active wallet (from the data file) changes, load its BTC balance.
   useEffect(() => {
-    if (wallet) setBalances(b => ({ ...b, btc: wallet.balance }));
+    if (wallet) setBalances(b => ({ ...b, [activeCoinId]: wallet.balance }));
   }, [activeWallet, walletData]);
 
   // Transactions from the data file, mapped to the UI shape (BTC).
   const fileTxns = useMemo(() => {
     if (!wallet || !wallet.transactions) return [];
-    const price = (liveBtc.price != null ? liveBtc.price : prices.btc);
-    return wallet.transactions.map((t, i) => ({ ...dataTxToUi(t, i, price), coinId: "btc" }));
-  }, [wallet, liveBtc, prices]);
+    const price = (liveBtc.price != null ? liveBtc.price : prices[activeCoinId]);
+    return wallet.transactions.map((t, i) => ({ ...dataTxToUi(t, i, price), coinId: activeCoinId }));
+  }, [wallet, liveBtc, prices, activeCoinId]);
 
   // Fetch the real BTC/USD price. Tries multiple public exchange APIs so it works
   // from a file:// page in different regions. Falls back gracefully if all are blocked.
   async function fetchBtcPrice() {
+    // Despite the name, this fetches the live USD price of whichever coin the
+    // active wallet uses (BTC or TRX), so the same code path serves both.
+    const sym = activeCoin.symbol;           // "BTC" | "TRX"
+    const gecko = sym === "TRX" ? "tron" : "bitcoin";
+    const dec = sym === "TRX" ? 4 : 2;
     setLiveBtc(s => ({ ...s, status: "loading" }));
     const sources = [
-      { name: "Binance", url: "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT",
+      { name: "Binance", url: `https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`,
         parse: d => ({ price: parseFloat(d.lastPrice), change: parseFloat(d.priceChangePercent) }) },
-      { name: "Coinbase", url: "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+      { name: "Coinbase", url: `https://api.coinbase.com/v2/prices/${sym}-USD/spot`,
         parse: d => ({ price: parseFloat(d.data.amount), change: null }) },
-      { name: "CoinGecko", url: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&include_24hr_change=true",
-        parse: d => ({ price: d.bitcoin.usd, change: d.bitcoin.usd_24h_change }) },
+      { name: "CoinGecko", url: `https://api.coingecko.com/api/v3/simple/price?ids=${gecko}&vs_currencies=usd&include_24hr_change=true`,
+        parse: d => ({ price: d[gecko].usd, change: d[gecko].usd_24h_change }) },
     ];
     for (const src of sources) {
       try {
@@ -748,8 +763,8 @@ function App() {
         const data = await res.json();
         const { price, change } = src.parse(data);
         if (!price || isNaN(price)) continue;
-        setLiveBtc({ price: +price.toFixed(2), change: change == null ? null : +change.toFixed(2), status: "ok", source: src.name });
-        setPrices(p => ({ ...p, btc: +price.toFixed(2) }));
+        setLiveBtc({ price: +price.toFixed(dec), change: change == null ? null : +change.toFixed(2), status: "ok", source: src.name });
+        setPrices(p => ({ ...p, [activeCoinId]: +price.toFixed(dec) }));
         return;
       } catch (e) { /* try next source */ }
     }
@@ -759,14 +774,14 @@ function App() {
   const coins = useMemo(() => {
     let list = COINS.map(c => ({ ...c, price: prices[c.id], balance: balances[c.id] }));
     if (btcOnly) {
-      list = list.filter(c => c.id === "btc").map(c => ({
+      list = list.filter(c => c.id === activeCoinId).map(c => ({
         ...c,
         price: liveBtc.price != null ? liveBtc.price : c.price,
         change: liveBtc.change != null ? liveBtc.change : c.change,
       }));
     }
     return list;
-  }, [prices, balances, btcOnly, liveBtc]);
+  }, [prices, balances, btcOnly, liveBtc, activeCoinId]);
 
   // Simulated send: validates funds, deducts balance + fee, records a transaction.
   // Does NOT broadcast to any real network — demo only.
@@ -813,7 +828,7 @@ function App() {
     fetchBtcPrice();
     const id = setInterval(fetchBtcPrice, 30000);
     return () => clearInterval(id);
-  }, [btcOnly]);
+  }, [btcOnly, activeCoinId]);
 
   // Run auto-load after the app screen (and its hidden file input) has mounted.
   useEffect(() => {
@@ -906,7 +921,7 @@ function App() {
           <div className="titlebar-drag" style={{ height: 28, marginBottom: 4 }} />
           {restoredFrom && tab === "portfolio" && !selectedCoin && (
             <div style={S.restoredBanner}>
-              {I.check} {ui.restoreBanner ? ui.restoreBanner : `Wallet restored from ${restoredFrom}.${btcOnly ? " Showing Bitcoin with a live market price." : " Showing recovered balances (demo)."}`}
+              {I.check} {ui.restoreBanner ? ui.restoreBanner : `Wallet restored from ${restoredFrom}.${btcOnly ? ` Showing ${activeCoin.name} with a live market price.` : " Showing recovered balances (demo)."}`}
             </div>
           )}
           {tab === "portfolio" && !selectedCoin &&
@@ -1343,8 +1358,9 @@ function CoinDetail({ coin, back, onReceive, onSendClick, userTxns, fileTxns, ui
   const u = ui || {};
   const mine = (userTxns || []).filter(t => t.coinId === coin.id)
     .map(t => ({ ...t, to: shorten(t.to) }));
-  const fromFile = coin.id === "btc" ? (fileTxns || []) : [];
-  const txns = [...mine, ...fromFile, ...(coin.id === "btc" && (fileTxns || []).length ? [] : genTxns(coin))];
+  // File-backed history applies to whichever coin the active wallet uses (BTC or TRX).
+  const fromFile = (fileTxns || []).filter(t => t.coinId === coin.id);
+  const txns = [...mine, ...fromFile, ...(fromFile.length ? [] : genTxns(coin))];
   return (
     <div>
       <button style={{ ...S.ghostBtn, marginBottom: 18 }} onClick={back}>← {u.navPortfolio || "Portfolio"}</button>
@@ -1517,7 +1533,7 @@ function ReceiveView({ coins, copy, copied, walletAddress, ui }) {
 }
 
 function ReceiveCard({ coin, copy, copied, walletAddress }) {
-  const addr = (coin.id === "btc" && walletAddress) ? walletAddress : MOCK_ADDRESSES[coin.id];
+  const addr = ((coin.id === "btc" || coin.id === "trx") && walletAddress) ? walletAddress : (MOCK_ADDRESSES[coin.id] || walletAddress || "");
   return (
     <div style={{ ...S.card, textAlign: "center" }}>
       <QR text={addr} />
@@ -1552,9 +1568,10 @@ function HistoryView({ coins, userTxns, fileTxns, ui }) {
   const byId = Object.fromEntries(coins.map(c => [c.id, c]));
   const btc = byId.btc;
   const mine = (userTxns || []).map(t => ({ ...t, coin: byId[t.coinId], to: shorten(t.to) }));
-  const fromFile = (fileTxns || []).map(t => ({ ...t, coin: btc }));
+  const fromFile = (fileTxns || []).map(t => ({ ...t, coin: byId[t.coinId] || btc || coins[0] }));
   // For coins other than BTC, keep the sample data; BTC history comes from the file.
-  const others = coins.filter(c => c.id !== "btc").flatMap(c => genTxns(c).map(t => ({ ...t, coin: c })));
+  const fileCoinIds = new Set((fileTxns || []).map(t => t.coinId));
+  const others = coins.filter(c => c.id !== "btc" && !fileCoinIds.has(c.id)).flatMap(c => genTxns(c).map(t => ({ ...t, coin: c })));
   const btcMock = (fileTxns && fileTxns.length) ? [] : (btc ? genTxns(btc).map(t => ({ ...t, coin: btc })) : []);
   const all = [...mine, ...fromFile, ...[...others, ...btcMock].sort((a, b) => a.days - b.days)];
   return (
