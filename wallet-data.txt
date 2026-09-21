@@ -9,7 +9,7 @@
     "sidebarDemo": "KeepKey Unlock",
     "createBtn": "Create new wallet",
     "restoreBtn": "Restore existing wallet",
-    "restoreBanner": "Wallet restored. TRON wallets are live from the network; other wallets are simulated.",
+    "restoreBanner": "Wallet restored.",
     "navPortfolio": "Portfolio",
     "navSend": "Send",
     "navReceive": "Receive",
