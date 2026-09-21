@@ -103,14 +103,14 @@
       "name": "Instructor Demo — Real TRX (Read-Only)",
       "symbol": "TRX",
       "balance": 0,
-      "address": "PASTE_YOUR_FIRST_TRX_ADDRESS_HERE",
+      "address": "TEHGE1zv6UmTdU3Z4PTDELhxLqqZf4o3Sc",
       "transactions": []
     },
     {
       "name": "Instructor Demo Wallet 2 — Real TRX (Read-Only)",
       "symbol": "TRX",
       "balance": 0,
-      "address": "PASTE_YOUR_SECOND_TRX_ADDRESS_HERE",
+      "address": "TGTsSX3L2BF7jcYW1695k63uTmU7YBVGQu",
       "transactions": []
     }
   ]
