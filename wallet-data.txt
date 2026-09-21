@@ -99,21 +99,21 @@
       ]
     },
     {
-      "name": "TRON Wallet 1 — Real (Read-Only)",
+      "name": "TRON Wallet 1",
       "symbol": "TRX",
       "balance": 0,
       "address": "TEHGE1zv6UmTdU3Z4PTDELhxLqqZf4o3Sc",
       "transactions": []
     },
     {
-      "name": "TRON Wallet 2 — Real (Read-Only)",
+      "name": "TRON Wallet 2",
       "symbol": "TRX",
       "balance": 0,
       "address": "TGTsSX3L2BF7jcYW1695k63uTmU7YBVGQu",
       "transactions": []
     },
     {
-      "name": "USDC Wallet (simulated)",
+      "name": "USDC Wallet",
       "symbol": "USDC",
       "balance": 2500.0,
       "address": "0xDEMO0000000000000000000000000000000000USDC",

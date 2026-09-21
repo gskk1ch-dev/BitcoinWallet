@@ -642,6 +642,7 @@ function App() {
   const [dataUrl, setDataUrl] = useState(DEFAULT_DATA_URL);
   const [appConfig, setAppConfig] = useState({}); // optional branding/text from the data file
   const [loadingMore, setLoadingMore] = useState(false); // paging live TRON history
+  const [focusCoinId, setFocusCoinId] = useState(null); // sidebar row focus: "trx" | "usdt" | null
 
   // All user-facing text, overridable via the data file's "app" object (flat keys) and/or
   // "app.text" object. Any key you don't set falls back to the default below.
@@ -899,6 +900,7 @@ function App() {
     if (singleCoin) {
       const keep = new Set([activeCoinId]);
       if (activeCoinId === "trx" && wallet && wallet.usdtBalance != null) keep.add("usdt");
+      if (activeCoinId === "trx" && focusCoinId && keep.has(focusCoinId)) { keep.clear(); keep.add(focusCoinId); }
       list = list.filter(c => keep.has(c.id)).map(c => c.id === activeCoinId ? ({
         ...c,
         price: liveBtc.price != null ? liveBtc.price : c.price,
@@ -906,7 +908,7 @@ function App() {
       }) : ({ ...c, price: 1.0, change: 0 }));
     }
     return list;
-  }, [prices, balances, singleCoin, liveBtc, activeCoinId, wallet]);
+  }, [prices, balances, singleCoin, liveBtc, activeCoinId, wallet, focusCoinId]);
 
   // Simulated send: validates funds, deducts balance + fee, records a transaction.
   // Does NOT broadcast to any real network — demo only.
@@ -1026,35 +1028,39 @@ function App() {
           <div style={{ background: "#13141f", border: "1px solid #1f2130", borderRadius: 12, padding: "10px 8px", marginBottom: 14 }}>
             <div style={{ fontSize: 10.5, color: "#5a5c70", textTransform: "uppercase", letterSpacing: 0.5, margin: "0 4px 8px" }}>Wallets</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {walletData.map((w, i) => {
+              {walletData.flatMap((w, i) => {
                 const sym = String(w.symbol || "BTC").toUpperCase();
-                const c = COINS.find(x => x.symbol === sym) || COINS[0];
                 const isTrx = sym === "TRX";
-                const active = i === activeWallet;
-                const bal = (+w.balance || 0).toLocaleString("en-US", { maximumFractionDigits: isTrx ? 2 : 6 });
-                const live = isTrx ? w.liveStatus : null;
+                const rows = [{ w, i, coinId: (COINS.find(x => x.symbol === sym) || COINS[0]).id }];
+                if (isTrx) rows.push({ w, i, coinId: "usdt" });
+                return rows;
+              }).map(({ w, i, coinId }) => {
+                const c = COINS.find(x => x.id === coinId) || COINS[0];
+                const isTrxWallet = String(w.symbol || "").toUpperCase() === "TRX";
+                const isUsdtRow = coinId === "usdt";
+                const rowActive = i === activeWallet && (isTrxWallet ? (focusCoinId || "trx") === coinId : true);
+                const live = isTrxWallet ? w.liveStatus : null;
+                const balance = isUsdtRow ? w.usdtBalance : w.balance;
+                const balText = balance == null ? "—" : (+balance).toLocaleString("en-US", { maximumFractionDigits: isTrxWallet ? 2 : 6 });
+                const label = isUsdtRow ? `USDT · ${w.name}` : w.name;
+                const txCount = isTrxWallet && Array.isArray(w.transactions)
+                  ? w.transactions.filter(t => (t.symbol || "TRX") === (isUsdtRow ? "USDT" : "TRX")).length : null;
                 return (
-                  <button key={i} className="no-drag" onClick={() => { setActiveWallet(i); setSelectedCoin(null); }}
+                  <button key={i + ":" + coinId} className="no-drag"
+                    onClick={() => { setActiveWallet(i); setFocusCoinId(isTrxWallet ? coinId : null); setSelectedCoin(null); }}
                     style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", textAlign: "left", cursor: "pointer",
-                             background: active ? "#1c1e2e" : "transparent", border: active ? "1px solid #2b2e44" : "1px solid transparent",
+                             background: rowActive ? "#1c1e2e" : "transparent", border: rowActive ? "1px solid #2b2e44" : "1px solid transparent",
                              borderRadius: 10, padding: "8px 8px", color: "#fff", fontFamily: "inherit" }}>
-                    <div style={{ position: "relative", flexShrink: 0 }}>
-                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: c.color + "22", border: `1px solid ${c.color}55`,
-                                    display: "grid", placeItems: "center", color: c.color, fontWeight: 800, fontSize: 15 }}>{c.symbol[0]}</div>
-                      {isTrx && (
-                        <div title="USDT (TRC-20)" style={{ position: "absolute", right: -4, bottom: -4, width: 16, height: 16, borderRadius: "50%",
-                                      background: "#26a17b", border: "2px solid #13141f", display: "grid", placeItems: "center", color: "#fff", fontSize: 9, fontWeight: 800 }}>₮</div>
-                      )}
-                    </div>
+                    <div style={{ width: 34, height: 34, borderRadius: "50%", flexShrink: 0, background: c.color + "22", border: `1px solid ${c.color}55`,
+                                  display: "grid", placeItems: "center", color: c.color, fontWeight: 800, fontSize: 15 }}>{isUsdtRow ? "₮" : c.symbol[0]}</div>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 12.5, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{w.name}</div>
+                      <div style={{ fontWeight: 600, fontSize: 12.5, lineHeight: 1.25, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
                       <div style={{ fontSize: 11, color: "#8b8da3", lineHeight: 1.3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {bal} {sym}
-                        {isTrx && w.usdtBalance != null && <span style={{ color: "#26a17b" }}> · {(+w.usdtBalance).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</span>}
+                        {balText} {c.symbol}
                       </div>
-                      {isTrx && (
+                      {isTrxWallet && (
                         <div style={{ fontSize: 10, lineHeight: 1.3, color: live === "ok" ? "#3ddc97" : live === "placeholder" ? "#ff6b6b" : "#ffb454" }}>
-                          {live === "ok" ? `● Live · ${w.liveTxCount == null ? "" : w.liveTxCount + " transfers"}`
+                          {live === "ok" ? `● Live · ${txCount == null ? "" : txCount + " transfers"}`
                            : live === "unavailable" ? "● Live data unavailable"
                            : live === "placeholder" ? "● No address set"
                            : "● Fetching…"}
@@ -1109,7 +1115,7 @@ function App() {
               onSendClick={() => { setSelectedCoin(null); setTab("send"); }} />}
           {tab === "send" && <SendView coins={coins} sendTransaction={sendTransaction} goPortfolio={() => setTab("portfolio")} ui={ui} />}
           {tab === "receive" && <ReceiveView coins={coins} copy={copy} copied={copied} walletAddress={wallet && wallet.address} ui={ui} />}
-          {tab === "history" && <HistoryView coins={coins} userTxns={userTxns} fileTxns={fileTxns} ui={ui} onLoadMore={loadMoreHistory} hasMore={hasMoreHistory} loadingMore={loadingMore} trxTotal={wallet && wallet.trxTotal} />}
+          {tab === "history" && <HistoryView coins={coins} userTxns={userTxns} fileTxns={focusCoinId ? fileTxns.filter(t => t.coinId === focusCoinId) : fileTxns} ui={ui} onLoadMore={loadMoreHistory} hasMore={hasMoreHistory} loadingMore={loadingMore} trxTotal={wallet && wallet.trxTotal} />}
           {tab === "security" && <SecurityView ui={ui} />}
           {tab === "settings" && <SettingsView {...{ hideBalances, setHideBalances, onLock: () => setScreen("welcome"), dataUrl, setDataUrl, loadFromUrl, dataSource, ui }} />}
         </main>
