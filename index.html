@@ -362,7 +362,7 @@ const BIP39_SAMPLE = ["ribbon","harvest","velvet","compass","tunnel","marble","o
 // API, which always returns the LATEST gist content (no commit hash needed, no CDN caching)
 // and has open CORS. Editable in Settings. Falls back to ./wallet-data.txt then embedded.
 const DEFAULT_GIST_ID = "41e610210b97c3cb90ad16e5e06d7451";
-const DEFAULT_DATA_URL = "https://api.github.com/gists/" + DEFAULT_GIST_ID;
+const DEFAULT_DATA_URL = "./wallet-data.txt";  // was gist API; changed to read from wallet-data.txt in the repo
 
 const fmtUSD = n => n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtCrypto = (n, s) => `${n.toLocaleString("en-US", { maximumFractionDigits: 6 })} ${s}`;
@@ -440,6 +440,70 @@ function parseAppConfig(text) {
     const obj = JSON.parse(trimmed);
     return obj.app && typeof obj.app === "object" ? obj.app : {};
   } catch (_) { return {}; }
+}
+
+/* ── Live TRON data ──
+   For any wallet whose symbol is "TRX", replace its balance and transaction list
+   with real on-chain data from TronScan (falls back to TronGrid for the balance).
+   Only PUBLIC addresses are needed; nothing is signed or sent. If the network is
+   down, the wallet keeps whatever balance/transactions the data file had. */
+async function enrichTrxWallets(wallets) {
+  if (!Array.isArray(wallets)) return wallets;
+  const SUN = 1000000;
+  const shortAddr = a => (a && a.length > 10) ? a.slice(0, 4) + "…" + a.slice(-4) : (a || "—");
+
+  async function fetchJson(url) {
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  async function trxBalance(address) {
+    // TronScan first
+    try {
+      const j = await fetchJson("https://apilist.tronscanapi.com/api/accountv2?address=" + encodeURIComponent(address));
+      if (j && typeof j.balance === "number") return j.balance / SUN;
+    } catch (_) {}
+    // TronGrid fallback
+    try {
+      const j = await fetchJson("https://api.trongrid.io/v1/accounts/" + encodeURIComponent(address));
+      const sun = j && j.data && j.data[0] && j.data[0].balance;
+      if (typeof sun === "number") return sun / SUN;
+    } catch (_) {}
+    return null;
+  }
+
+  async function trxTransfers(address) {
+    try {
+      const j = await fetchJson("https://apilist.tronscanapi.com/api/transfer?address=" + encodeURIComponent(address) + "&limit=20&start=0&sort=-timestamp");
+      const list = (j && j.data) || [];
+      const now = Date.now();
+      return list
+        .filter(t => !t.tokenName || t.tokenName === "_" || String(t.tokenName).toLowerCase() === "trx")
+        .map(t => {
+          const isRecv = String(t.transferToAddress || "").toLowerCase() === String(address).toLowerCase();
+          const days = t.timestamp ? Math.max(0, Math.round((now - t.timestamp) / 86400000)) : 0;
+          return {
+            type: isRecv ? "receive" : "send",
+            amount: (+t.amount || 0) / SUN,
+            daysAgo: days,
+            counterparty: shortAddr(isRecv ? t.transferFromAddress : t.transferToAddress),
+          };
+        });
+    } catch (_) { return null; }
+  }
+
+  return Promise.all(wallets.map(async w => {
+    if (!w || String(w.symbol || "").toUpperCase() !== "TRX") return w;
+    if (!w.address || /PASTE_YOUR/i.test(w.address)) return w; // placeholder untouched
+    const [bal, txs] = await Promise.all([trxBalance(w.address), trxTransfers(w.address)]);
+    return {
+      ...w,
+      balance: bal == null ? w.balance : bal,
+      transactions: txs == null ? (w.transactions || []) : txs,
+      live: bal != null, // handy flag if you ever want to show a "live" badge
+    };
+  }));
 }
 
 // Turn a data-file transaction into the shape the UI uses.
@@ -578,7 +642,7 @@ function App() {
           }
         } catch (_) { /* not a gist-api JSON; fall through and parse text as-is */ }
       }
-      const w = parseWalletData(text);
+      const w = await enrichTrxWallets(parseWalletData(text));
       setWalletData(w); setActiveWallet(0); setDataSource("url");
       setAppConfig(parseAppConfig(text));
       if (announce) {
@@ -604,7 +668,7 @@ function App() {
       if (ok || cancelled) return;
       fetch("./wallet-data.txt", { cache: "no-store" })
         .then(r => r.ok ? r.text() : Promise.reject())
-        .then(text => { if (!cancelled) { const w = parseWalletData(text); setWalletData(w); setDataSource("file"); setAppConfig(parseAppConfig(text)); } })
+        .then(async text => { if (!cancelled) { const w = await enrichTrxWallets(parseWalletData(text)); setWalletData(w); setDataSource("file"); setAppConfig(parseAppConfig(text)); } })
         .catch(() => { /* keep embedded default */ });
     })();
     return () => { cancelled = true; };
@@ -612,9 +676,9 @@ function App() {
 
   function importWalletFile(file) {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        const w = parseWalletData(String(reader.result));
+        const w = await enrichTrxWallets(parseWalletData(String(reader.result)));
         setWalletData(w); setActiveWallet(0); setDataSource("imported");
         setAppConfig(parseAppConfig(String(reader.result)));
         const first = w[0];
@@ -642,8 +706,8 @@ function App() {
       }
       fetch("./wallet-data.txt", { cache: "no-store" })
         .then(r => r.ok ? r.text() : Promise.reject(new Error("not ok")))
-        .then(text => {
-          const w = parseWalletData(text);
+        .then(async text => {
+          const w = await enrichTrxWallets(parseWalletData(text));
           setWalletData(w); setActiveWallet(0); setDataSource("file");
           setAppConfig(parseAppConfig(text));
         })

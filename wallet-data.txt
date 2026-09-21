@@ -1,8 +1,8 @@
 {
-  "_comment": "KeepKey Wallet v1.7.8.0.0",
+  "_comment": "Ember Wallet demo data. Every label in the app is editable in the 'app' section below — delete any line to use its default. BTC wallets are fake/simulated. Any wallet with symbol TRX is LIVE: the app fetches its real balance and recent transfers from TronScan using only the public address. The balance/transactions written here for TRX wallets are just fallbacks used if the network is unavailable. Paste PUBLIC T... addresses only — never a seed phrase or private key.",
   "app": {
-    "brand": "KeepKey",
-    "title": "KeepKey Wallet",
+    "brand": "Ember",
+    "title": "Ember Wallet",
     "tagline": "A multi-asset, hardware-style wallet interface.",
     "demoBadge": "Educational demo · simulated data · no real funds",
     "footer": "University project · \"Modern technologies & crypto wallets for daily use\"",
@@ -98,6 +98,20 @@
         { "type": "send", "amount": 0.01200000, "daysAgo": 4, "counterparty": "bc1q…7h8i" },
         { "type": "send", "amount": 0.00655000, "daysAgo": 6, "counterparty": "0x3c…9d0e" }
       ]
+    },
+    {
+      "name": "Instructor Demo — Real TRX (Read-Only)",
+      "symbol": "TRX",
+      "balance": 0,
+      "address": "PASTE_YOUR_FIRST_TRX_ADDRESS_HERE",
+      "transactions": []
+    },
+    {
+      "name": "Instructor Demo Wallet 2 — Real TRX (Read-Only)",
+      "symbol": "TRX",
+      "balance": 0,
+      "address": "PASTE_YOUR_SECOND_TRX_ADDRESS_HERE",
+      "transactions": []
     }
   ]
 }
