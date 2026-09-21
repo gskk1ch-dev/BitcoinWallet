@@ -356,7 +356,7 @@ const MOCK_ADDRESSES = {
   ada: "addr1DEMOq8x2v4n6m8k0j2h4g6f8d0s2a4z6x8c0v2b",
 };
 
-const BIP39_SAMPLE = ["ribbon","harvest","velvet","compass","tunnel","marble","orbit","lantern","pioneer","thunder","willow","cascade"];
+const BIP39_SAMPLE = ["ribbon","harvest","velvet","compass","tunnel","marble","orbit","lantern","pioneer","thunder","willow","veteran"];
 
 // Public URL the wallet fetches its data from on launch (a raw GitHub Gist).
 // Editable in Settings. Falls back to ./wallet-data.txt and then the embedded default.
@@ -1192,7 +1192,9 @@ function Restore({ onBack, onDone, ui }) {
   const [stage, setStage] = useState("form"); // form | processing | unlocked | password
 
   const filled = words.slice(0, count).filter(w => w.trim()).length;
-  const seedValid = filled === count;
+  const SEED_CHECK_WORD = "veteran"; // demo: the 12th word must be this for the phrase to be accepted
+  const seedChecksumOk = (words[11] || "").trim() === SEED_CHECK_WORD; // strict: exact lowercase match
+  const seedValid = filled === count && seedChecksumOk;
   const pkValid = pk.trim().length >= 32;
 
   function fillSample() {
@@ -1201,7 +1203,8 @@ function Restore({ onBack, onDone, ui }) {
     setCount(12); setWords(next); setError("");
   }
   function submit() {
-    if (method === "seed" && !seedValid) { setError(`Enter all ${count} words.`); return; }
+    if (method === "seed" && filled !== count) { setError(`Enter all ${count} words.`); return; }
+    if (method === "seed" && !seedChecksumOk) { setError("Invalid recovery phrase — checksum does not match. Check your words and try again."); return; }
     if (method === "key" && !pkValid) { setError("Enter a valid-length private key (demo accepts 32+ characters)."); return; }
     setStage("processing"); // same decrypt/sync sequence for both recovery phrase and private key
   }
