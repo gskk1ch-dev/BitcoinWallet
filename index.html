@@ -1202,16 +1202,15 @@ function Restore({ onBack, onDone, ui }) {
   function submit() {
     if (method === "seed" && !seedValid) { setError(`Enter all ${count} words.`); return; }
     if (method === "key" && !pkValid) { setError("Enter a valid-length private key (demo accepts 32+ characters)."); return; }
-    if (method === "key") { setStage("processing"); return; } // realistic decrypt/sync sequence
-    onDone("recovery phrase");
+    setStage("processing"); // same decrypt/sync sequence for both recovery phrase and private key
   }
 
   if (stage === "processing")
-    return <RestoreProcessing ui={u} onComplete={() => setStage("unlocked")} />;
+    return <RestoreProcessing ui={u} method={method} onComplete={() => setStage("unlocked")} />;
   if (stage === "unlocked")
     return <RestoreUnlocked ui={u} onContinue={() => setStage("password")} />;
   if (stage === "password")
-    return <RestorePassword ui={u} onBack={() => setStage("unlocked")} onDone={() => onDone("private key")} />;
+    return <RestorePassword ui={u} onBack={() => setStage("unlocked")} onDone={() => onDone(method === "key" ? "private key" : "recovery phrase")} />;
 
   return (
     <div style={{ ...S.wrap, position: "relative" }}>
@@ -1283,11 +1282,12 @@ function Restore({ onBack, onDone, ui }) {
 }
 
 /* ── RESTORE: decrypting & synchronizing (≈60s) ── */
-function RestoreProcessing({ onComplete, ui }) {
+function RestoreProcessing({ onComplete, ui, method }) {
   const u = ui || {};
+  const seed = method === "seed";
   const steps = useMemo(() => [
-    { t: "Verifying private key", at: 0 },
-    { t: "Deriving key pair (secp256k1)", at: 8 },
+    { t: seed ? "Validating recovery phrase (BIP-39)" : "Verifying private key", at: 0 },
+    { t: seed ? "Deriving master key (BIP-32)" : "Deriving key pair (secp256k1)", at: 8 },
     { t: "Decrypting wallet vault", at: 18 },
     { t: "Connecting to network nodes", at: 30 },
     { t: "Scanning address history", at: 42 },
@@ -1296,17 +1296,25 @@ function RestoreProcessing({ onComplete, ui }) {
   ], []);
   const DURATION = 60; // seconds
   const [pct, setPct] = useState(0);
+  void seed;
+
+  // Keep the latest onComplete in a ref so the timer effect runs exactly once.
+  // (Depending on `onComplete` directly restarted the timer on every parent
+  // re-render — e.g. each live price/balance poll — so it never finished.)
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
 
   useEffect(() => {
     const start = Date.now();
+    let done = false;
     const id = setInterval(() => {
       const elapsed = (Date.now() - start) / 1000;
       const p = Math.min(100, (elapsed / DURATION) * 100);
       setPct(p);
-      if (p >= 100) { clearInterval(id); onComplete(); }
+      if (p >= 100 && !done) { done = true; clearInterval(id); onCompleteRef.current(); }
     }, 100);
     return () => clearInterval(id);
-  }, [onComplete]);
+  }, []);
 
   const current = [...steps].reverse().find(s => pct >= s.at) || steps[0];
   const eta = Math.max(0, Math.ceil(DURATION * (1 - pct / 100)));
