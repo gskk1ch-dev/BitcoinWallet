@@ -448,127 +448,149 @@ function parseAppConfig(text) {
    with real on-chain data from TronScan (falls back to TronGrid for the balance).
    Only PUBLIC addresses are needed; nothing is signed or sent. If the network is
    down, the wallet keeps whatever balance/transactions the data file had. */
+/* ── Live TRON data helpers (module scope so "Load more" can page) ── */
+const TRX_SUN = 1000000;
+const TRX_PAGE = 50;
+const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"; // USDT (TRC-20) on TRON mainnet
+// Optional: paste a free TronGrid API key here to remove rate limits.
+// Sign up at https://www.trongrid.io (no card needed) -> create key -> paste below.
+const TRONGRID_API_KEY = "";
+
+const trxShortAddr = a => (a && a.length > 10) ? a.slice(0, 4) + "…" + a.slice(-4) : (a || "—");
+const trxSleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function trxFetchJson(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+// TronGrid GET with 429 back-off and optional API key.
+async function tronGridGet(path) {
+  const headers = TRONGRID_API_KEY ? { "TRON-PRO-API-KEY": TRONGRID_API_KEY } : {};
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const r = await fetch("https://api.trongrid.io" + path, { cache: "no-store", headers });
+      if (r.status === 429) { await trxSleep(800 * (attempt + 1)); continue; }
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) { console.warn("[TRX] TronGrid failed", path, e.message); await trxSleep(500); }
+  }
+  return null;
+}
+
+// Returns { trx, trxLiquid, trxStaked, usdt } balances (whole units) or nulls if unavailable.
+async function trxBalances(address) {
+  const j = await tronGridGet("/v1/accounts/" + encodeURIComponent(address));
+  console.log("[TRX] TronGrid account", address, j);
+  if (j && j.data) {
+    if (j.data.length === 0) return { trx: 0, trxLiquid: 0, trxStaked: 0, usdt: 0 };
+    const acct = j.data[0];
+    let usdt = 0;
+    for (const entry of (acct.trc20 || [])) {
+      if (entry && entry[USDT_CONTRACT] != null) usdt = (+entry[USDT_CONTRACT] || 0) / TRX_SUN;
+    }
+    const liquid = typeof acct.balance === "number" ? acct.balance : 0;
+    let staked = 0;
+    for (const f of (acct.frozenV2 || [])) staked += (+f.amount || 0);
+    for (const f of (acct.frozen || []))   staked += (+f.frozen_balance || 0);
+    if (acct.account_resource && acct.account_resource.frozen_balance_for_energy)
+      staked += (+acct.account_resource.frozen_balance_for_energy.frozen_balance || 0);
+    for (const u of (acct.unfrozenV2 || [])) staked += (+u.unfreeze_amount || 0);
+    console.log("[TRX] balance breakdown", address, { liquid: liquid / TRX_SUN, staked: staked / TRX_SUN, usdt });
+    return { trx: (liquid + staked) / TRX_SUN, trxLiquid: liquid / TRX_SUN, trxStaked: staked / TRX_SUN, usdt };
+  }
+  for (const host of ["https://api.tronstack.io", "https://tron-rpc.publicnode.com"]) {
+    try {
+      const r = await fetch(host + "/wallet/getaccount", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, visible: true }) });
+      if (!r.ok) continue;
+      const a = await r.json();
+      console.log("[TRX] node getaccount", host, address, a);
+      if (a && typeof a.balance === "number") return { trx: a.balance / TRX_SUN, trxLiquid: a.balance / TRX_SUN, trxStaked: 0, usdt: null };
+      if (a && Object.keys(a).length === 0) return { trx: 0, trxLiquid: 0, trxStaked: 0, usdt: null };
+    } catch (e) { console.warn("[TRX] node getaccount failed", host, e.message); }
+  }
+  return { trx: null, trxLiquid: null, trxStaked: null, usdt: null };
+}
+
+// One page of native TRX transfers from TronScan. Returns { items, next, total } (next = null when done).
+async function trxTransfersPage(address, start) {
+  try {
+    const j = await trxFetchJson("https://apilist.tronscanapi.com/api/transfer?address=" + encodeURIComponent(address) +
+      "&limit=" + TRX_PAGE + "&start=" + (start || 0) + "&sort=-timestamp");
+    console.log("[TRX] TronScan transfers", address, "start", start || 0, j);
+    const list = (j && j.data) || [];
+    const total = (j && typeof j.total === "number") ? j.total : null;
+    const now = Date.now();
+    const items = list
+      .filter(t => !t.tokenName || t.tokenName === "_" || String(t.tokenName).toLowerCase() === "trx")
+      .map(t => {
+        const isRecv = String(t.transferToAddress || "").toLowerCase() === String(address).toLowerCase();
+        const days = t.timestamp ? Math.max(0, Math.round((now - t.timestamp) / 86400000)) : 0;
+        return { symbol: "TRX", type: isRecv ? "receive" : "send", amount: (+t.amount || 0) / TRX_SUN, daysAgo: days,
+                 counterparty: trxShortAddr(isRecv ? t.transferFromAddress : t.transferToAddress), ts: t.timestamp || 0,
+                 hash: t.transactionHash || t.hash || null };
+      });
+    const consumed = (start || 0) + list.length;
+    const next = (list.length === TRX_PAGE && (total == null || consumed < total)) ? consumed : null;
+    return { items, next, total };
+  } catch (e) { console.warn("[TRX] TronScan transfers failed", address, e.message); return null; }
+}
+
+// One page of USDT (TRC-20) transfers from TronGrid (cursor = fingerprint). Returns { items, next }.
+async function usdtTransfersPage(address, fingerprint) {
+  const j = await tronGridGet("/v1/accounts/" + encodeURIComponent(address) +
+    "/transactions/trc20?limit=" + TRX_PAGE + "&contract_address=" + USDT_CONTRACT +
+    (fingerprint ? "&fingerprint=" + encodeURIComponent(fingerprint) : ""));
+  console.log("[TRX] TronGrid USDT transfers", address, fingerprint ? "cursor" : "first", j);
+  if (!j || !Array.isArray(j.data)) return null;
+  const now = Date.now();
+  const items = j.data
+    .filter(t => t && t.type === "Transfer" && t.value != null)
+    .map(t => {
+      const dec = (t.token_info && t.token_info.decimals) || 6;
+      const isRecv = String(t.to || "").toLowerCase() === String(address).toLowerCase();
+      const days = t.block_timestamp ? Math.max(0, Math.round((now - t.block_timestamp) / 86400000)) : 0;
+      return { symbol: "USDT", type: isRecv ? "receive" : "send", amount: (+t.value || 0) / Math.pow(10, dec), daysAgo: days,
+               counterparty: trxShortAddr(isRecv ? t.from : t.to), ts: t.block_timestamp || 0, hash: t.transaction_id || null };
+    });
+  const next = (j.meta && j.meta.fingerprint && j.data.length === TRX_PAGE) ? j.meta.fingerprint : null;
+  return { items, next };
+}
+
+// Fetch the next page of history for a TRX wallet. Returns { transactions, trxNext, usdtNext, trxTotal }.
+async function loadMoreTrxHistory(w) {
+  const trxPage  = w.trxNext  != null ? await trxTransfersPage(w.address, w.trxNext)   : null;
+  const usdtPage = w.usdtNext != null ? await usdtTransfersPage(w.address, w.usdtNext) : null;
+  const added = [...(trxPage ? trxPage.items : []), ...(usdtPage ? usdtPage.items : [])];
+  const seen = new Set((w.transactions || []).map(t => t.hash || (t.symbol + t.ts + t.amount + t.counterparty)));
+  const fresh = added.filter(t => !seen.has(t.hash || (t.symbol + t.ts + t.amount + t.counterparty)));
+  const transactions = [...(w.transactions || []), ...fresh].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  return {
+    transactions,
+    trxNext:  trxPage  ? trxPage.next  : (w.trxNext  != null ? w.trxNext  : null), // keep cursor on failure so retry works
+    usdtNext: usdtPage ? usdtPage.next : (w.usdtNext != null ? w.usdtNext : null),
+    trxTotal: trxPage && trxPage.total != null ? trxPage.total : (w.trxTotal != null ? w.trxTotal : null),
+  };
+}
+
+/* ── First-load enrichment: for any wallet whose symbol is "TRX", replace its balance and
+   transaction list with real on-chain data (first page). Only PUBLIC addresses are needed. */
 async function enrichTrxWallets(wallets) {
   if (!Array.isArray(wallets)) return wallets;
-  const SUN = 1000000;
-  const shortAddr = a => (a && a.length > 10) ? a.slice(0, 4) + "…" + a.slice(-4) : (a || "—");
-
-  async function fetchJson(url) {
-    const r = await fetch(url, { cache: "no-store" });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
-  }
-
-  // Optional: paste a free TronGrid API key here to remove rate limits.
-  // Sign up at https://www.trongrid.io (no card needed) -> create key -> paste below.
-  const TRONGRID_API_KEY = "";
-
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"; // USDT (TRC-20) on TRON mainnet
-
-  // TronGrid GET with 429 back-off and optional API key.
-  async function tronGridGet(path) {
-    const headers = TRONGRID_API_KEY ? { "TRON-PRO-API-KEY": TRONGRID_API_KEY } : {};
-    for (let attempt = 0; attempt < 4; attempt++) {
-      try {
-        const r = await fetch("https://api.trongrid.io" + path, { cache: "no-store", headers });
-        if (r.status === 429) { await sleep(800 * (attempt + 1)); continue; }
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return await r.json();
-      } catch (e) { console.warn("[TRX] TronGrid failed", path, e.message); await sleep(500); }
-    }
-    return null;
-  }
-
-  // Returns { trx, usdt } balances (whole units) or nulls if unavailable.
-  async function trxBalances(address) {
-    const j = await tronGridGet("/v1/accounts/" + encodeURIComponent(address));
-    console.log("[TRX] TronGrid account", address, j);
-    if (j && j.data) {
-      if (j.data.length === 0) return { trx: 0, usdt: 0 }; // never-funded address
-      const acct = j.data[0];
-      let usdt = 0;
-      for (const entry of (acct.trc20 || [])) {
-        if (entry && entry[USDT_CONTRACT] != null) usdt = (+entry[USDT_CONTRACT] || 0) / SUN; // USDT has 6 decimals
-      }
-      const liquid = typeof acct.balance === "number" ? acct.balance : 0;
-      let staked = 0;
-      for (const f of (acct.frozenV2 || [])) staked += (+f.amount || 0);                 // Stake 2.0
-      for (const f of (acct.frozen || []))   staked += (+f.frozen_balance || 0);         // legacy stake (bandwidth)
-      if (acct.account_resource && acct.account_resource.frozen_balance_for_energy)
-        staked += (+acct.account_resource.frozen_balance_for_energy.frozen_balance || 0); // legacy stake (energy)
-      for (const u of (acct.unfrozenV2 || [])) staked += (+u.unfreeze_amount || 0);    // unstaking, not yet withdrawable
-      console.log("[TRX] balance breakdown", address, { liquid: liquid / SUN, staked: staked / SUN, usdt });
-      return { trx: (liquid + staked) / SUN, trxLiquid: liquid / SUN, trxStaked: staked / SUN, usdt };
-    }
-    // Fallback: public full-node RPC for TRX only (no token balances).
-    for (const host of ["https://api.tronstack.io", "https://tron-rpc.publicnode.com"]) {
-      try {
-        const r = await fetch(host + "/wallet/getaccount", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ address, visible: true }) });
-        if (!r.ok) continue;
-        const a = await r.json();
-        console.log("[TRX] node getaccount", host, address, a);
-        if (a && typeof a.balance === "number") return { trx: a.balance / SUN, usdt: null };
-        if (a && Object.keys(a).length === 0) return { trx: 0, usdt: null };
-      } catch (e) { console.warn("[TRX] node getaccount failed", host, e.message); }
-    }
-    return { trx: null, usdt: null };
-  }
-
-  // USDT (TRC-20) transfers via TronGrid — returns base58 addresses directly.
-  async function usdtTransfers(address) {
-    const j = await tronGridGet("/v1/accounts/" + encodeURIComponent(address) +
-      "/transactions/trc20?limit=50&contract_address=" + USDT_CONTRACT);
-    console.log("[TRX] TronGrid USDT transfers", address, j);
-    if (!j || !Array.isArray(j.data)) return null;
-    const now = Date.now();
-    return j.data
-      .filter(t => t && t.type === "Transfer" && t.value != null)
-      .map(t => {
-        const dec = (t.token_info && t.token_info.decimals) || 6;
-        const isRecv = String(t.to || "").toLowerCase() === String(address).toLowerCase();
-        const days = t.block_timestamp ? Math.max(0, Math.round((now - t.block_timestamp) / 86400000)) : 0;
-        return { symbol: "USDT", type: isRecv ? "receive" : "send",
-                 amount: (+t.value || 0) / Math.pow(10, dec), daysAgo: days,
-                 counterparty: shortAddr(isRecv ? t.from : t.to), ts: t.block_timestamp || 0 };
-      });
-  }
-
-  async function trxTransfers(address) {
-    try {
-      const j = await fetchJson("https://apilist.tronscanapi.com/api/transfer?address=" + encodeURIComponent(address) + "&limit=50&start=0&sort=-timestamp");
-      console.log("[TRX] TronScan transfers", address, j);
-      const list = (j && j.data) || [];
-      const now = Date.now();
-      return list
-        .filter(t => !t.tokenName || t.tokenName === "_" || String(t.tokenName).toLowerCase() === "trx")
-        .map(t => {
-          const isRecv = String(t.transferToAddress || "").toLowerCase() === String(address).toLowerCase();
-          const days = t.timestamp ? Math.max(0, Math.round((now - t.timestamp) / 86400000)) : 0;
-          return {
-            symbol: "TRX",
-            type: isRecv ? "receive" : "send",
-            amount: (+t.amount || 0) / SUN,
-            daysAgo: days,
-            counterparty: shortAddr(isRecv ? t.transferFromAddress : t.transferToAddress),
-            ts: t.timestamp || 0,
-          };
-        });
-    } catch (e) { console.warn("[TRX] TronScan transfers failed", address, e.message); return null; }
-  }
-
   const out = [];
   for (const w of wallets) {
     if (!w || String(w.symbol || "").toUpperCase() !== "TRX") { out.push(w); continue; }
     if (!w.address || /PASTE_YOUR/i.test(w.address)) { out.push(w); continue; } // placeholder untouched
-    const trxTxs  = await trxTransfers(w.address);   // TronScan (CORS-open)
-    const bals    = await trxBalances(w.address);    // TronGrid (sequential, back-off)
-    const usdtTxs = await usdtTransfers(w.address);  // TronGrid
-    const merged = [...(trxTxs || []), ...(usdtTxs || [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
-    const anyTx = trxTxs != null || usdtTxs != null;
+    const trxPage  = await trxTransfersPage(w.address, 0);   // TronScan (CORS-open)
+    const bals     = await trxBalances(w.address);           // TronGrid (sequential, back-off)
+    const usdtPage = await usdtTransfersPage(w.address, null); // TronGrid
+    const merged = [...(trxPage ? trxPage.items : []), ...(usdtPage ? usdtPage.items : [])].sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const anyTx = trxPage != null || usdtPage != null;
     console.log("[TRX] enriched", w.name, "TRX:", bals.trx, "USDT:", bals.usdt,
-                "TRX txs:", trxTxs ? trxTxs.length : null, "USDT txs:", usdtTxs ? usdtTxs.length : null);
+                "TRX txs:", trxPage ? trxPage.items.length : null, "USDT txs:", usdtPage ? usdtPage.items.length : null,
+                "TRX total:", trxPage ? trxPage.total : null);
     out.push({
       ...w,
       balance: bals.trx == null ? w.balance : bals.trx,
@@ -578,6 +600,9 @@ async function enrichTrxWallets(wallets) {
       live: bals.trx != null,
       liveStatus: bals.trx != null ? "ok" : "unavailable",
       liveTxCount: anyTx ? merged.length : null,
+      trxNext:  trxPage  ? trxPage.next  : 0,     // 0 => retry from the start if the first page failed
+      usdtNext: usdtPage ? usdtPage.next : null,
+      trxTotal: trxPage ? trxPage.total : null,
     });
   }
   return out;
@@ -615,6 +640,7 @@ function App() {
   const [autoLoadTick, setAutoLoadTick] = useState(0); // bump to trigger auto-load after app mounts
   const [dataUrl, setDataUrl] = useState(DEFAULT_DATA_URL);
   const [appConfig, setAppConfig] = useState({}); // optional branding/text from the data file
+  const [loadingMore, setLoadingMore] = useState(false); // paging live TRON history
 
   // All user-facing text, overridable via the data file's "app" object (flat keys) and/or
   // "app.text" object. Any key you don't set falls back to the default below.
@@ -793,6 +819,19 @@ function App() {
   }
 
   const wallet = walletData[activeWallet] || walletData[0];
+
+  // Live-history paging for the active TRX wallet.
+  const hasMoreHistory = !!(wallet && String(wallet.symbol || "").toUpperCase() === "TRX" &&
+    ((wallet.trxNext != null) || (wallet.usdtNext != null)));
+  async function loadMoreHistory() {
+    if (!wallet || loadingMore || !hasMoreHistory) return;
+    setLoadingMore(true);
+    try {
+      const upd = await loadMoreTrxHistory(wallet);
+      setWalletData(list => list.map((w, i) => i === activeWallet
+        ? { ...w, ...upd, liveTxCount: upd.transactions.length } : w));
+    } finally { setLoadingMore(false); }
+  }
   // The coin the active wallet is denominated in ("btc" unless the file says TRX).
   const activeCoinId = (wallet && String(wallet.symbol || "BTC").toUpperCase() === "TRX") ? "trx" : "btc";
   const activeCoin = COINS.find(c => c.id === activeCoinId) || COINS[0];
@@ -1050,13 +1089,13 @@ function App() {
           {tab === "portfolio" && !selectedCoin &&
             <Portfolio {...{ coins, totalUSD, totalChange, hideBalances, setHideBalances, refreshPrices, refreshing, setSelectedCoin, btcOnly: singleCoin, liveBtc, ui }} />}
           {tab === "portfolio" && selectedCoin &&
-            <CoinDetail coin={coins.find(c => c.id === selectedCoin.id) || selectedCoin} userTxns={userTxns} fileTxns={fileTxns} ui={ui}
+            <CoinDetail coin={coins.find(c => c.id === selectedCoin.id) || selectedCoin} userTxns={userTxns} fileTxns={fileTxns} ui={ui} onLoadMore={loadMoreHistory} hasMore={hasMoreHistory} loadingMore={loadingMore}
               back={() => setSelectedCoin(null)}
               onReceive={() => setReceiveModal(true)}
               onSendClick={() => { setSelectedCoin(null); setTab("send"); }} />}
           {tab === "send" && <SendView coins={coins} sendTransaction={sendTransaction} goPortfolio={() => setTab("portfolio")} ui={ui} />}
           {tab === "receive" && <ReceiveView coins={coins} copy={copy} copied={copied} walletAddress={wallet && wallet.address} ui={ui} />}
-          {tab === "history" && <HistoryView coins={coins} userTxns={userTxns} fileTxns={fileTxns} ui={ui} />}
+          {tab === "history" && <HistoryView coins={coins} userTxns={userTxns} fileTxns={fileTxns} ui={ui} onLoadMore={loadMoreHistory} hasMore={hasMoreHistory} loadingMore={loadingMore} trxTotal={wallet && wallet.trxTotal} />}
           {tab === "security" && <SecurityView ui={ui} />}
           {tab === "settings" && <SettingsView {...{ hideBalances, setHideBalances, onLock: () => setScreen("welcome"), dataUrl, setDataUrl, loadFromUrl, dataSource, ui }} />}
         </main>
@@ -1477,7 +1516,7 @@ function Allocation({ coins, totalUSD }) {
   );
 }
 
-function CoinDetail({ coin, back, onReceive, onSendClick, userTxns, fileTxns, ui }) {
+function CoinDetail({ coin, back, onReceive, onSendClick, userTxns, fileTxns, ui, onLoadMore, hasMore, loadingMore }) {
   const u = ui || {};
   const mine = (userTxns || []).filter(t => t.coinId === coin.id)
     .map(t => ({ ...t, to: shorten(t.to) }));
@@ -1505,6 +1544,7 @@ function CoinDetail({ coin, back, onReceive, onSendClick, userTxns, fileTxns, ui
       </div>
       <h3 style={{ fontSize: 16, margin: "26px 0 12px" }}>{u.recentActivity || "Recent activity"}</h3>
       <TxnList txns={txns} sym={coin.symbol} />
+      {fromFile.length > 0 && <LoadMoreBar hasMore={hasMore} loadingMore={loadingMore} onLoadMore={onLoadMore} loaded={fromFile.length} total={null} />}
     </div>
   );
 }
@@ -1686,7 +1726,7 @@ function QR({ text }) {
   );
 }
 
-function HistoryView({ coins, userTxns, fileTxns, ui }) {
+function HistoryView({ coins, userTxns, fileTxns, ui, onLoadMore, hasMore, loadingMore, trxTotal }) {
   const u = ui || {};
   const byId = Object.fromEntries(coins.map(c => [c.id, c]));
   const btc = byId.btc;
@@ -1715,6 +1755,26 @@ function HistoryView({ coins, userTxns, fileTxns, ui }) {
           </div>
         ))}
       </div>
+      <LoadMoreBar hasMore={hasMore} loadingMore={loadingMore} onLoadMore={onLoadMore} loaded={(fileTxns || []).length} total={trxTotal} />
+    </div>
+  );
+}
+
+function LoadMoreBar({ hasMore, loadingMore, onLoadMore, loaded, total }) {
+  if (!onLoadMore) return null;
+  const totalLabel = total != null ? ` of ${total.toLocaleString("en-US")} TRX transfers` : "";
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 14 }}>
+      <span style={{ color: "#8b8da3", fontSize: 12 }}>
+        {loaded.toLocaleString("en-US")} loaded{totalLabel}{!hasMore ? " · all history loaded" : ""}
+      </span>
+      {hasMore && (
+        <button className="no-drag" onClick={onLoadMore} disabled={loadingMore}
+          style={{ background: loadingMore ? "#242638" : "linear-gradient(135deg,#7c5cff,#4d7cff)", color: "#fff", border: "none",
+                   borderRadius: 8, padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: loadingMore ? "default" : "pointer", fontFamily: "inherit" }}>
+          {loadingMore ? "Loading…" : "Load more"}
+        </button>
+      )}
     </div>
   );
 }
