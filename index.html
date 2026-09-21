@@ -1164,7 +1164,8 @@ function Welcome({ onCreate, onRestore, ui }) {
           </p>
           <div style={{ ...S.demoBadge, margin: "16px auto 0" }}>{I.warn} {u.demoBadge || "Educational demo · simulated data · no real funds"}</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 30 }}>
-            <button className="no-drag" style={{ ...S.primaryBtn, padding: 16, fontSize: 16 }} onClick={onCreate}>
+            <button className="no-drag" disabled title="Not available in this demo"
+              style={{ ...S.primaryBtn, padding: 16, fontSize: 16, opacity: 0.4, cursor: "not-allowed", filter: "grayscale(0.6)" }}>
               {I.plus} {u.createBtn || "Create new wallet"}
             </button>
             <button className="no-drag" style={{ ...S.secondaryBtn, padding: 16, fontSize: 16 }} onClick={onRestore}>
