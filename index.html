@@ -854,13 +854,17 @@ function App() {
   const activeCoinId = (COINS.find(c => c.symbol === String((wallet && wallet.symbol) || "BTC").toUpperCase()) || COINS[0]).id;
   const activeCoin = COINS.find(c => c.id === activeCoinId) || COINS[0];
   // Single-coin ("live") view: after a private-key restore, or whenever the active wallet is TRX.
-  const singleCoin = btcOnly || activeCoinId !== "btc"; // non-BTC wallets always get the focused single-coin view
+  const singleCoin = true; // every wallet shows only its own coin (Bitcoin wallet -> Bitcoin only, etc.)
 
   // When the active wallet (from the data file) changes, load its BTC balance.
   useEffect(() => {
     if (!wallet) return;
-    setBalances(b => ({ ...b, [activeCoinId]: wallet.balance,
-      ...(activeCoinId === "trx" && wallet.usdtBalance != null ? { usdt: wallet.usdtBalance } : {}) }));
+    setBalances(b => {
+      const next = Object.fromEntries(Object.keys(b).map(k => [k, 0])); // reset everything
+      next[activeCoinId] = wallet.balance;
+      if (activeCoinId === "trx" && wallet.usdtBalance != null) next.usdt = wallet.usdtBalance;
+      return next;
+    });
   }, [activeWallet, walletData]);
 
   // Transactions from the data file, mapped to the UI shape (BTC).
