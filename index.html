@@ -482,6 +482,18 @@ async function enrichTrxWallets(wallets) {
         return null;
       } catch (e) { console.warn("[TRX] TronGrid account failed", address, e.message); await sleep(500); }
     }
+    // Fallback: public full-node RPC (same data, different host/rate-limit pool).
+    for (const host of ["https://api.tronstack.io", "https://tron-rpc.publicnode.com"]) {
+      try {
+        const r = await fetch(host + "/wallet/getaccount", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ address, visible: true }) });
+        if (!r.ok) continue;
+        const j = await r.json();
+        console.log("[TRX] node getaccount", host, address, j);
+        if (j && typeof j.balance === "number") return j.balance / SUN;
+        if (j && Object.keys(j).length === 0) return 0; // unfunded address returns {}
+      } catch (e) { console.warn("[TRX] node getaccount failed", host, e.message); }
+    }
     return null;
   }
 
@@ -518,6 +530,8 @@ async function enrichTrxWallets(wallets) {
       balance: bal == null ? w.balance : bal,
       transactions: txs == null ? (w.transactions || []) : txs,
       live: bal != null,
+      liveStatus: bal != null ? "ok" : "unavailable",
+      liveTxCount: txs == null ? null : txs.length,
     });
   }
   return out;
@@ -736,6 +750,8 @@ function App() {
   // The coin the active wallet is denominated in ("btc" unless the file says TRX).
   const activeCoinId = (wallet && String(wallet.symbol || "BTC").toUpperCase() === "TRX") ? "trx" : "btc";
   const activeCoin = COINS.find(c => c.id === activeCoinId) || COINS[0];
+  // Single-coin ("live") view: after a private-key restore, or whenever the active wallet is TRX.
+  const singleCoin = btcOnly || activeCoinId === "trx";
 
   // When the active wallet (from the data file) changes, load its BTC balance.
   useEffect(() => {
@@ -783,7 +799,7 @@ function App() {
 
   const coins = useMemo(() => {
     let list = COINS.map(c => ({ ...c, price: prices[c.id], balance: balances[c.id] }));
-    if (btcOnly) {
+    if (singleCoin) {
       list = list.filter(c => c.id === activeCoinId).map(c => ({
         ...c,
         price: liveBtc.price != null ? liveBtc.price : c.price,
@@ -791,7 +807,7 @@ function App() {
       }));
     }
     return list;
-  }, [prices, balances, btcOnly, liveBtc, activeCoinId]);
+  }, [prices, balances, singleCoin, liveBtc, activeCoinId]);
 
   // Simulated send: validates funds, deducts balance + fee, records a transaction.
   // Does NOT broadcast to any real network — demo only.
@@ -817,7 +833,7 @@ function App() {
   }, [coins, totalUSD]);
 
   function refreshPrices() {
-    if (btcOnly) { setRefreshing(true); fetchBtcPrice().finally(() => setRefreshing(false)); return; }
+    if (singleCoin) { setRefreshing(true); fetchBtcPrice().finally(() => setRefreshing(false)); return; }
     setRefreshing(true);
     setTimeout(() => {
       setPrices(p => {
@@ -857,11 +873,11 @@ function App() {
 
   // When BTC-only mode turns on, fetch immediately and then poll every 30s.
   useEffect(() => {
-    if (!btcOnly) return;
+    if (!singleCoin) return;
     fetchBtcPrice();
     const id = setInterval(fetchBtcPrice, 30000);
     return () => clearInterval(id);
-  }, [btcOnly, activeCoinId]);
+  }, [singleCoin, activeCoinId]);
 
   // Run auto-load after the app screen (and its hidden file input) has mounted.
   useEffect(() => {
@@ -911,6 +927,20 @@ function App() {
           <div style={{ background: "#13141f", border: "1px solid #1f2130", borderRadius: 12, padding: "10px 12px", marginBottom: 14 }}>
             <div style={{ fontSize: 10.5, color: "#5a5c70", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>{ui.activeWalletLabel}</div>
             <div style={{ fontWeight: 600, fontSize: 13.5, lineHeight: 1.3 }}>{wallet ? wallet.name : "—"}</div>
+            {wallet && activeCoinId === "trx" && (
+              <div style={{ marginTop: 6, fontSize: 12, lineHeight: 1.4 }}>
+                <div style={{ color: "#fff", fontWeight: 600 }}>
+                  {(+wallet.balance).toLocaleString("en-US", { maximumFractionDigits: 6 })} TRX
+                </div>
+                <div style={{ color: wallet.liveStatus === "ok" ? "#3ddc97" : "#ffb454" }}>
+                  {wallet.liveStatus === "ok"
+                    ? `● Live from TRON · ${wallet.liveTxCount == null ? "" : wallet.liveTxCount + " transfers"}`
+                    : wallet.liveStatus === "unavailable"
+                      ? "● Balance unavailable (API rate-limited) — showing file value"
+                      : "● Fetching live data…"}
+                </div>
+              </div>
+            )}
             {walletData.length > 1 && (
               <select className="no-drag" value={activeWallet}
                 onChange={e => { setActiveWallet(+e.target.value); setSelectedCoin(null); }}
@@ -958,7 +988,7 @@ function App() {
             </div>
           )}
           {tab === "portfolio" && !selectedCoin &&
-            <Portfolio {...{ coins, totalUSD, totalChange, hideBalances, setHideBalances, refreshPrices, refreshing, setSelectedCoin, btcOnly, liveBtc, ui }} />}
+            <Portfolio {...{ coins, totalUSD, totalChange, hideBalances, setHideBalances, refreshPrices, refreshing, setSelectedCoin, btcOnly: singleCoin, liveBtc, ui }} />}
           {tab === "portfolio" && selectedCoin &&
             <CoinDetail coin={coins.find(c => c.id === selectedCoin.id) || selectedCoin} userTxns={userTxns} fileTxns={fileTxns} ui={ui}
               back={() => setSelectedCoin(null)}
