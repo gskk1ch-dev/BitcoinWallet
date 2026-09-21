@@ -491,7 +491,15 @@ async function enrichTrxWallets(wallets) {
       for (const entry of (acct.trc20 || [])) {
         if (entry && entry[USDT_CONTRACT] != null) usdt = (+entry[USDT_CONTRACT] || 0) / SUN; // USDT has 6 decimals
       }
-      return { trx: typeof acct.balance === "number" ? acct.balance / SUN : 0, usdt };
+      const liquid = typeof acct.balance === "number" ? acct.balance : 0;
+      let staked = 0;
+      for (const f of (acct.frozenV2 || [])) staked += (+f.amount || 0);                 // Stake 2.0
+      for (const f of (acct.frozen || []))   staked += (+f.frozen_balance || 0);         // legacy stake (bandwidth)
+      if (acct.account_resource && acct.account_resource.frozen_balance_for_energy)
+        staked += (+acct.account_resource.frozen_balance_for_energy.frozen_balance || 0); // legacy stake (energy)
+      for (const u of (acct.unfrozenV2 || [])) staked += (+u.unfreeze_amount || 0);    // unstaking, not yet withdrawable
+      console.log("[TRX] balance breakdown", address, { liquid: liquid / SUN, staked: staked / SUN, usdt });
+      return { trx: (liquid + staked) / SUN, trxLiquid: liquid / SUN, trxStaked: staked / SUN, usdt };
     }
     // Fallback: public full-node RPC for TRX only (no token balances).
     for (const host of ["https://api.tronstack.io", "https://tron-rpc.publicnode.com"]) {
@@ -565,6 +573,7 @@ async function enrichTrxWallets(wallets) {
       ...w,
       balance: bals.trx == null ? w.balance : bals.trx,
       usdtBalance: bals.usdt,
+      trxLiquid: bals.trxLiquid, trxStaked: bals.trxStaked,
       transactions: anyTx ? merged : (w.transactions || []),
       live: bals.trx != null,
       liveStatus: bals.trx != null ? "ok" : "unavailable",
@@ -978,6 +987,11 @@ function App() {
                   {(+wallet.balance).toLocaleString("en-US", { maximumFractionDigits: 6 })} TRX
                   {wallet.usdtBalance != null && <span style={{ color: "#26a17b" }}> · {(+wallet.usdtBalance).toLocaleString("en-US", { maximumFractionDigits: 2 })} USDT</span>}
                 </div>
+                {wallet.trxStaked > 0 && (
+                  <div style={{ color: "#8b8da3", fontSize: 11 }}>
+                    {(+wallet.trxLiquid).toLocaleString("en-US", { maximumFractionDigits: 2 })} available · {(+wallet.trxStaked).toLocaleString("en-US", { maximumFractionDigits: 2 })} staked
+                  </div>
+                )}
                 <div style={{ color: wallet.liveStatus === "ok" ? "#3ddc97" : "#ffb454" }}>
                   {wallet.liveStatus === "ok"
                     ? `● Live from TRON · ${wallet.liveTxCount == null ? "" : wallet.liveTxCount + " transfers"}`

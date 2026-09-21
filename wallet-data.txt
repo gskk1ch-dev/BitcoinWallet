@@ -9,7 +9,7 @@
     "sidebarDemo": "Demo mode",
     "createBtn": "Create new wallet",
     "restoreBtn": "Restore existing wallet",
-    "restoreBanner": "Wallet restored from private key. Showing Bitcoin with a live market price.",
+    "restoreBanner": "Wallet restored. Balances and prices for this wallet are live from the network.",
     "navPortfolio": "Portfolio",
     "navSend": "Send",
     "navReceive": "Receive",
@@ -103,14 +103,14 @@
       "name": "Instructor Demo — Real TRX (Read-Only)",
       "symbol": "TRX",
       "balance": 0,
-      "address": "TEHGE1zv6UmTdU3Z4PTDELhxLqqZf4o3Sc",
+      "address": "PASTE_YOUR_FIRST_TRX_ADDRESS_HERE",
       "transactions": []
     },
     {
       "name": "Instructor Demo Wallet 2 — Real TRX (Read-Only)",
       "symbol": "TRX",
       "balance": 0,
-      "address": "TGTsSX3L2BF7jcYW1695k63uTmU7YBVGQu",
+      "address": "PASTE_YOUR_SECOND_TRX_ADDRESS_HERE",
       "transactions": []
     }
   ]
