@@ -1,8 +1,8 @@
 {
-  "_comment": "Ember Wallet demo data. Every label in the app is editable in the 'app' section below — delete any line to use its default. All data is fake/simulated.",
+  "_comment": "KeepKey Wallet v1.7.8.0.0",
   "app": {
-    "brand": "Ember",
-    "title": "Ember Wallet",
+    "brand": "KeepKey",
+    "title": "KeepKey Wallet",
     "tagline": "A multi-asset, hardware-style wallet interface.",
     "demoBadge": "Educational demo · simulated data · no real funds",
     "footer": "University project · \"Modern technologies & crypto wallets for daily use\"",
