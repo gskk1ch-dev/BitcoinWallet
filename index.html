@@ -1103,13 +1103,16 @@ function App() {
             )}
           </div>
 
-          {nav.map(it => (
-            <button key={it.id} className="no-drag"
-              onClick={() => { setTab(it.id); setSelectedCoin(null); }}
-              style={{ ...S.navItem, ...(tab === it.id ? S.navItemActive : {}) }}>
+          {nav.map(it => {
+            const disabled = it.id === "receive" || it.id === "settings";
+            return (
+            <button key={it.id} className="no-drag" disabled={disabled}
+              title={disabled ? "Disabled in this demo" : undefined}
+              onClick={disabled ? undefined : () => { setTab(it.id); setSelectedCoin(null); }}
+              style={{ ...S.navItem, ...(tab === it.id ? S.navItemActive : {}), ...(disabled ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}>
               <span style={{ display: "grid", placeItems: "center", width: 18 }}>{it.icon}</span> {it.label}
             </button>
-          ))}
+          );})}
           <div style={{ marginTop: "auto" }}>
             <div style={{ fontSize: 10, color: "#5a5c70", textAlign: "center", marginBottom: 6 }}>
               Data: {dataSource === "url" ? "web link" : dataSource === "file" ? "wallet-data.txt" : dataSource === "imported" ? "imported file" : "built-in default"}
@@ -1236,7 +1239,7 @@ function Restore({ onBack, onDone, ui }) {
             <button className="no-drag" onClick={() => setMethod("seed")}
               style={{ ...S.tab, ...(method === "seed" ? S.tabActive : {}) }}>{I.download} {u.tabRecoveryPhrase || "Recovery phrase"}</button>
             <button className="no-drag" onClick={() => setMethod("key")}
-              style={{ ...S.tab, ...(method === "key" ? S.tabActive : {}) }}>{I.key} {u.tabPrivateKey || "Private key"}</button>
+              disabled title="Disabled in this demo" style={{ ...S.tab, ...(method === "key" ? S.tabActive : {}), opacity: 0.4, cursor: "not-allowed" }}>{I.key} {u.tabPrivateKey || "Private key"}</button>
           </div>
 
           {method === "seed" ? (
@@ -1248,7 +1251,7 @@ function Restore({ onBack, onDone, ui }) {
                     {n} words
                   </button>
                 ))}
-                <button className="no-drag" style={{ ...S.ghostBtn, marginLeft: "auto" }} onClick={fillSample}>{u.useDemoPhrase || "Use demo phrase"}</button>
+                <button className="no-drag" disabled title="Disabled in this demo" style={{ ...S.ghostBtn, marginLeft: "auto", opacity: 0.4, cursor: "not-allowed" }}>{u.useDemoPhrase || "Use demo phrase"}</button>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
                 {Array.from({ length: count }).map((_, i) => (
@@ -1711,8 +1714,8 @@ function SendView({ coins, sendTransaction, goPortfolio, ui }) {
         <Row k="Total" v={fmtUSD(usd + live.price * 0.0002)} strong />
       </div>
       {error && <div style={{ color: "#ff6b6b", fontSize: 13, marginTop: 12 }}>{error}</div>}
-      <button style={{ ...S.primaryBtn, width: "100%", marginTop: 20, padding: 15, opacity: addr && amt ? 1 : 0.5 }}
-        disabled={!addr || !amt} onClick={review}>{u.sendReview || "Review & sign"}</button>
+      <button disabled title="Disabled in this demo"
+        style={{ ...S.primaryBtn, width: "100%", marginTop: 20, padding: 15, opacity: 0.4, cursor: "not-allowed" }}>{u.sendReview || "Review & sign"}</button>
     </div>
   );
 }
@@ -1860,7 +1863,7 @@ function SecurityView({ ui }) {
           A real wallet derives every key from a 12–24 word seed (BIP-39). Anyone with these words controls the funds — which is why hardware wallets keep them offline. The words below are a <strong>fake demo phrase</strong>.
         </p>
         {!show ? (
-          <button style={{ ...S.secondaryBtn, marginTop: 16 }} onClick={() => setShow(true)}>{I.eye} Reveal demo phrase</button>
+          <button style={{ ...S.secondaryBtn, marginTop: 16 }} onClick={() => setShow(true)}>{I.eye} Reveal Phrase on this app</button>
         ) : (
           <div style={{ marginTop: 16 }}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
