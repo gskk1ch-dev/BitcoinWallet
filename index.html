@@ -1860,7 +1860,7 @@ function SecurityView({ ui }) {
       <div style={{ ...S.card, borderLeft: "3px solid #7c5cff" }}>
         <h3 style={{ margin: "0 0 8px", fontSize: 16 }}>{u.seedHeading || "🔑 Recovery seed phrase"}</h3>
         <p style={{ color: "#8b8da3", fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-          A real wallet derives every key from a 12–24 word seed (BIP-39). Anyone with these words controls the funds — which is why hardware wallets keep them offline. The words below are a <strong>fake demo phrase</strong>.
+          A real wallet derives every key from a 12–24 word seed (BIP-39). Anyone with these words controls the funds — which is why hardware wallets keep them offline.
         </p>
         {!show ? (
           <button style={{ ...S.secondaryBtn, marginTop: 16 }} onClick={() => setShow(true)}>{I.eye} Reveal Phrase on this app</button>
